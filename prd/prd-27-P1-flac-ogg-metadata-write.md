@@ -1,4 +1,4 @@
-# PRD-21 (P1): Write metadata tags to FLAC and OGG files
+# PRD-27 (P1): Write metadata tags to FLAC and OGG files
 
 ## Problem
 `MetadataWriter.applyMetadata` only handles MP3 and M4B/M4A/AAC. When a library contains FLAC or OGG files, hitting Apply silently skips all text tag writes for those files — title, author, narrator, publisher, language, genre, and description are never updated on disk. Cover art already works for both formats (via `FlacWriter.embedCover` and `OggWriter.embedCover`), but text tags do not.
