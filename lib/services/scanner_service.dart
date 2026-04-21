@@ -206,7 +206,7 @@ class ScannerService {
     final title = opf.title ?? fileTitle;
     final author = opf.author ?? fileAuthor;
     final narrator = opf.narrator ?? fileNarrator;
-    final subtitle = fileSubtitle;
+    final subtitle = opf.subtitle ?? fileSubtitle;
     final releaseDate = opf.releaseDate ?? fileReleaseDate;
     final description = opf.description ?? fileDescription;
     final publisher = opf.publisher ?? filePublisher;

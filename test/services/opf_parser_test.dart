@@ -112,5 +112,50 @@ void main() {
       final result = parseOpf(xml);
       expect(result.title, isNull);
     });
+
+    test('parses subtitle from meta name="subtitle"', () {
+      const xml = '''<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Main Title</dc:title>
+    <meta name="subtitle" content="The Subtitle"/>
+  </metadata>
+</package>''';
+      final result = parseOpf(xml);
+      expect(result.subtitle, 'The Subtitle');
+      // subtitle must not appear in opfMeta passthrough
+      expect(result.opfMeta.containsKey('subtitle'), isFalse);
+    });
+
+    test('subtitle excluded from opfMeta passthrough', () {
+      const xml = '''<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Book</dc:title>
+    <meta name="subtitle" content="Sub"/>
+    <meta name="custom:field" content="keep"/>
+  </metadata>
+</package>''';
+      final result = parseOpf(xml);
+      expect(result.subtitle, 'Sub');
+      expect(result.opfMeta.containsKey('subtitle'), isFalse);
+      expect(result.opfMeta['custom:field'], 'keep');
+    });
+
+    test('no duplicate dc:description when both subtitle and description set', () {
+      // Verify the old dc:description opf:file-as="subtitle" format is NOT
+      // produced by the parser (it reads description only from dc:description).
+      const xml = '''<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Book</dc:title>
+    <dc:description>Long description here</dc:description>
+    <meta name="subtitle" content="Short subtitle"/>
+  </metadata>
+</package>''';
+      final result = parseOpf(xml);
+      expect(result.description, 'Long description here');
+      expect(result.subtitle, 'Short subtitle');
+    });
   });
 }

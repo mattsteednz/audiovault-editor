@@ -99,8 +99,7 @@ class MetadataWriter {
           '    <dc:identifier>${_xmlEscape(book.identifier!)}</dc:identifier>');
     }
     if (book.subtitle != null) {
-      buf.writeln('    <dc:description opf:file-as="subtitle">'
-          '${_xmlEscape(book.subtitle!)}</dc:description>');
+      buf.writeln('    <meta name="subtitle" content="${_xmlEscape(book.subtitle!)}"/>');
     }
     if (book.author != null) {
       buf.writeln('    <dc:creator opf:role="aut">'
