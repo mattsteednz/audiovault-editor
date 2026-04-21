@@ -237,4 +237,50 @@ class LibraryController extends ChangeNotifier {
     _batchPaths.clear();
     notifyListeners();
   }
+
+  void onBookRenamed(String oldPath, String newPath) {
+    final book = _books.firstWhere((b) => b.path == oldPath);
+    final updatedBook = Audiobook(
+      title: book.title,
+      author: book.author,
+      duration: book.duration,
+      path: newPath,
+      coverImagePath: book.coverImagePath?.replaceFirst(oldPath, newPath),
+      coverImageBytes: book.coverImageBytes,
+      audioFiles: book.audioFiles.map((f) => f.replaceFirst(oldPath, newPath)).toList(),
+      chapterDurations: book.chapterDurations,
+      chapters: book.chapters,
+      chapterNames: book.chapterNames,
+      narrator: book.narrator,
+      subtitle: book.subtitle,
+      description: book.description,
+      publisher: book.publisher,
+      language: book.language,
+      genre: book.genre,
+      identifier: book.identifier,
+      releaseDate: book.releaseDate,
+      series: book.series,
+      seriesIndex: book.seriesIndex,
+      pendingCoverPath: book.pendingCoverPath,
+      additionalAuthors: book.additionalAuthors,
+      additionalNarrators: book.additionalNarrators,
+      opfMeta: book.opfMeta,
+      hasOpf: book.hasOpf,
+      hasCue: book.hasCue,
+      hasEmbeddedTags: book.hasEmbeddedTags,
+      fileTitleRaw: book.fileTitleRaw,
+      fileAuthorRaw: book.fileAuthorRaw,
+      fileNarratorRaw: book.fileNarratorRaw,
+      fileReleaseDateRaw: book.fileReleaseDateRaw,
+      fileSubtitleRaw: book.fileSubtitleRaw,
+    );
+    _books = [
+      for (final b in _books) b.path == oldPath ? updatedBook : b
+    ];
+    if (_selected?.path == oldPath) {
+      _selected = updatedBook;
+    }
+    _dirtyPaths.remove(oldPath);
+    notifyListeners();
+  }
 }

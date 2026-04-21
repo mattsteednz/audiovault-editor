@@ -14,6 +14,7 @@ class BookDetailScreen extends StatefulWidget {
   final void Function() onRescan;
   final void Function()? onUndo;
   final void Function(bool isDirty) onDirtyChanged;
+  final void Function(String oldPath, String newPath)? onRenamed;
 
   const BookDetailScreen({
     super.key,
@@ -23,6 +24,7 @@ class BookDetailScreen extends StatefulWidget {
     required this.onRescan,
     this.onUndo,
     required this.onDirtyChanged,
+    this.onRenamed,
   });
 
   @override
@@ -376,6 +378,106 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     _onChanged();
   }
 
+  Future<void> _renameFolder() async {
+    final book = widget.book;
+    final currentName = p.basename(book.path);
+    
+    // Propose a new name based on metadata
+    final author = _authorCtrl.text.trim().isEmpty 
+        ? 'Unknown' 
+        : _authorCtrl.text.trim();
+    final title = _titleCtrl.text.trim().isEmpty 
+        ? 'Untitled' 
+        : _titleCtrl.text.trim();
+    
+    // Make filesystem-safe by removing invalid characters
+    final proposedName = '$author - $title'
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final controller = TextEditingController(text: proposedName);
+    
+    final confirmed = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename folder'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Current name:', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 4),
+            Text(currentName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            const Text('New name:', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Enter new folder name',
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+    
+    if (confirmed == null || confirmed.isEmpty || confirmed == currentName) {
+      return;
+    }
+
+    // Perform the rename
+    try {
+      final parentDir = Directory(book.path).parent;
+      final newPath = p.join(parentDir.path, confirmed);
+      
+      // Check if target already exists
+      if (await Directory(newPath).exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            backgroundColor: Colors.red[900],
+            content: Text('A folder named "$confirmed" already exists'),
+          ));
+        }
+        return;
+      }
+
+      // Rename the directory
+      await Directory(book.path).rename(newPath);
+      
+      // Notify parent to update the book list
+      widget.onRenamed?.call(book.path, newPath);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Renamed folder to "$confirmed"'),
+        ));
+      }
+    } on FileSystemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red[900],
+          content: Text('Failed to rename folder: ${e.message}'),
+        ));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -547,6 +649,29 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           onPressed: otherBooks.isEmpty ? null : _copyFrom,
           icon: const Icon(Icons.content_copy, size: 18),
           label: const Text('Copy from…'),
+        ),
+        const SizedBox(width: 8),
+        PopupMenuButton<String>(
+          tooltip: 'More actions',
+          icon: const Icon(Icons.more_vert),
+          onSelected: (value) async {
+            if (value == 'rename') {
+              await _renameFolder();
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'rename',
+              enabled: !_applying && !_rescanning,
+              child: const Row(
+                children: [
+                  Icon(Icons.drive_file_rename_outline, size: 18),
+                  SizedBox(width: 8),
+                  Text('Rename folder'),
+                ],
+              ),
+            ),
+          ],
         ),
         const SizedBox(width: 8),
         PopupMenuButton<String>(

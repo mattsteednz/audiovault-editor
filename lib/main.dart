@@ -165,6 +165,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                                     : null,
                                 onDirtyChanged: (dirty) =>
                                     _ctrl.markDirty(_ctrl.selected!.path, dirty: dirty),
+                                onRenamed: _ctrl.onBookRenamed,
                               )
                             : const Center(
                                 child: Text('Select a book to view metadata',
