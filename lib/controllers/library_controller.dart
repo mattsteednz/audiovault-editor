@@ -3,7 +3,7 @@ import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
 import 'package:audiovault_editor/services/scanner_service.dart';
 
-enum SortOrder { titleAsc, titleDesc, authorAsc, authorDesc }
+enum SortOrder { titleAsc, titleDesc, authorAsc, authorDesc, seriesAsc, narratorAsc, durationAsc, durationDesc }
 
 class LibraryController extends ChangeNotifier {
   final _scanner = ScannerService();
@@ -13,6 +13,10 @@ class LibraryController extends ChangeNotifier {
   Audiobook? _undoSnapshot;
   final Set<String> _dirtyPaths = {};
   final Set<String> _batchPaths = {};
+  final Set<String> _duplicatePaths = {};
+  final Set<String> _missingCoverPaths = {};
+  bool _showDuplicatesOnly = false;
+  bool _showMissingCoverOnly = false;
   bool _scanning = false;
   String? _folderPath;
   String _searchQuery = '';
@@ -25,6 +29,12 @@ class LibraryController extends ChangeNotifier {
   Audiobook? get undoSnapshot => _undoSnapshot;
   Set<String> get dirtyPaths => Set.unmodifiable(_dirtyPaths);
   Set<String> get batchPaths => Set.unmodifiable(_batchPaths);
+  Set<String> get duplicatePaths => Set.unmodifiable(_duplicatePaths);
+  Set<String> get missingCoverPaths => Set.unmodifiable(_missingCoverPaths);
+  bool get showDuplicatesOnly => _showDuplicatesOnly;
+  bool get showMissingCoverOnly => _showMissingCoverOnly;
+  int get missingCoverCount => _missingCoverPaths.length;
+  int get duplicateCount => _duplicatePaths.length;
   bool get scanning => _scanning;
   String? get folderPath => _folderPath;
   String get searchQuery => _searchQuery;
@@ -38,25 +48,38 @@ class LibraryController extends ChangeNotifier {
             return (b.title ?? '').toLowerCase().contains(q) ||
                 (b.author ?? '').toLowerCase().contains(q);
           }).toList();
+    if (_showDuplicatesOnly) {
+      list = list.where((b) => _duplicatePaths.contains(b.path)).toList();
+    }
+    if (_showMissingCoverOnly) {
+      list = list
+          .where((b) => b.coverImagePath == null && b.coverImageBytes == null)
+          .toList();
+    }
     list = List.of(list);
     list.sort((a, b) {
       switch (_sortOrder) {
         case SortOrder.titleAsc:
-          return (a.title ?? '')
-              .toLowerCase()
-              .compareTo((b.title ?? '').toLowerCase());
+          return (a.title ?? '').toLowerCase().compareTo((b.title ?? '').toLowerCase());
         case SortOrder.titleDesc:
-          return (b.title ?? '')
-              .toLowerCase()
-              .compareTo((a.title ?? '').toLowerCase());
+          return (b.title ?? '').toLowerCase().compareTo((a.title ?? '').toLowerCase());
         case SortOrder.authorAsc:
-          return (a.author ?? '')
-              .toLowerCase()
-              .compareTo((b.author ?? '').toLowerCase());
+          return (a.author ?? '').toLowerCase().compareTo((b.author ?? '').toLowerCase());
         case SortOrder.authorDesc:
-          return (b.author ?? '')
-              .toLowerCase()
-              .compareTo((a.author ?? '').toLowerCase());
+          return (b.author ?? '').toLowerCase().compareTo((a.author ?? '').toLowerCase());
+        case SortOrder.seriesAsc:
+          final as_ = a.series?.toLowerCase() ?? '';
+          final bs_ = b.series?.toLowerCase() ?? '';
+          if (as_.isEmpty && bs_.isEmpty) return 0;
+          if (as_.isEmpty) return 1;
+          if (bs_.isEmpty) return -1;
+          return as_.compareTo(bs_);
+        case SortOrder.narratorAsc:
+          return (a.narrator ?? '').toLowerCase().compareTo((b.narrator ?? '').toLowerCase());
+        case SortOrder.durationAsc:
+          return (a.duration ?? Duration.zero).compareTo(b.duration ?? Duration.zero);
+        case SortOrder.durationDesc:
+          return (b.duration ?? Duration.zero).compareTo(a.duration ?? Duration.zero);
       }
     });
     return list;
@@ -72,6 +95,37 @@ class LibraryController extends ChangeNotifier {
   void setSortOrder(SortOrder order) {
     _sortOrder = order;
     notifyListeners();
+  }
+
+  void toggleShowDuplicates() {
+    _showDuplicatesOnly = !_showDuplicatesOnly;
+    notifyListeners();
+  }
+
+  void toggleShowMissingCover() {
+    _showMissingCoverOnly = !_showMissingCoverOnly;
+    notifyListeners();
+  }
+
+  void _recomputeFlags() {
+    _missingCoverPaths.clear();
+    for (final b in _books) {
+      if (b.coverImagePath == null && b.coverImageBytes == null) {
+        _missingCoverPaths.add(b.path);
+      }
+    }
+    _duplicatePaths.clear();
+    final keyToBooks = <String, List<String>>{};
+    for (final b in _books) {
+      if ((b.title ?? '').isEmpty && (b.author ?? '').isEmpty) continue;
+      final key = '${b.title ?? ''}${b.author ?? ''}'
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]'), '');
+      (keyToBooks[key] ??= []).add(b.path);
+    }
+    for (final paths in keyToBooks.values) {
+      if (paths.length > 1) _duplicatePaths.addAll(paths);
+    }
   }
 
   void selectBook(Audiobook book) {
@@ -117,6 +171,7 @@ class LibraryController extends ChangeNotifier {
     _dirtyPaths.clear();
     _batchPaths.clear();
     _searchQuery = '';
+    _recomputeFlags();
     notifyListeners();
   }
 
@@ -125,6 +180,7 @@ class LibraryController extends ChangeNotifier {
     _books = [for (final b in _books) b.path == updated.path ? updated : b];
     _selected = updated;
     _dirtyPaths.remove(updated.path);
+    _recomputeFlags();
     notifyListeners();
   }
 

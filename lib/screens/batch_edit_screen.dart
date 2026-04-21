@@ -19,6 +19,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
   final _releaseDateCtrl = TextEditingController();
   final _seriesCtrl = TextEditingController();
   final _seriesIndexCtrl = TextEditingController();
+  final _publisherCtrl = TextEditingController();
+  final _languageCtrl = TextEditingController();
+  final _genreCtrl = TextEditingController();
 
   bool _applying = false;
   int _progress = 0;
@@ -30,6 +33,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
     _releaseDateCtrl.dispose();
     _seriesCtrl.dispose();
     _seriesIndexCtrl.dispose();
+    _publisherCtrl.dispose();
+    _languageCtrl.dispose();
+    _genreCtrl.dispose();
     super.dispose();
   }
 
@@ -39,6 +45,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
     final releaseDate = _releaseDateCtrl.text.trim();
     final series = _seriesCtrl.text.trim();
     final seriesIndex = int.tryParse(_seriesIndexCtrl.text.trim());
+    final publisher = _publisherCtrl.text.trim();
+    final language = _languageCtrl.text.trim();
+    final genre = _genreCtrl.text.trim();
 
     setState(() {
       _applying = true;
@@ -55,6 +64,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
         releaseDate: releaseDate.isNotEmpty ? releaseDate : null,
         series: series.isNotEmpty ? series : null,
         seriesIndex: seriesIndex,
+        publisher: publisher.isNotEmpty ? publisher : null,
+        language: language.isNotEmpty ? language : null,
+        genre: genre.isNotEmpty ? genre : null,
       );
 
       // Only write fields that were filled in
@@ -64,6 +76,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
         releaseDate: releaseDate.isNotEmpty ? releaseDate : book.releaseDate,
         series: series.isNotEmpty ? series : book.series,
         seriesIndex: seriesIndex ?? book.seriesIndex,
+        publisher: publisher.isNotEmpty ? publisher : book.publisher,
+        language: language.isNotEmpty ? language : book.language,
+        genre: genre.isNotEmpty ? genre : book.genre,
       );
 
       final errs = await MetadataWriter.applyMetadata(toWrite);
@@ -115,6 +130,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
           _field('Published', _releaseDateCtrl),
           _field('Series', _seriesCtrl),
           _field('Series #', _seriesIndexCtrl),
+          _field('Publisher', _publisherCtrl),
+          _field('Language', _languageCtrl),
+          _field('Genre', _genreCtrl),
           const SizedBox(height: 16),
           if (_applying) ...[
             Text('$_progress / ${widget.books.length}'),

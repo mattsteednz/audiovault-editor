@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
@@ -34,6 +35,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   late TextEditingController _seriesCtrl;
   late TextEditingController _seriesIndexCtrl;
   late TextEditingController _descriptionCtrl;
+  late TextEditingController _publisherCtrl;
+  late TextEditingController _languageCtrl;
+  late TextEditingController _genreCtrl;
   late List<TextEditingController> _chapterCtrls;
   late List<String> _originalChapterTitles;
   late String _originalTitle;
@@ -44,6 +48,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   late String _originalSeries;
   late String _originalSeriesIndex;
   late String _originalDescription;
+  late String _originalPublisher;
+  late String _originalLanguage;
+  late String _originalGenre;
   String? _pendingCoverPath;
   bool _coverDropHover = false;
   bool _isDirty = false;
@@ -77,6 +84,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     _originalSeries = widget.book.series ?? '';
     _originalSeriesIndex = widget.book.seriesIndex?.toString() ?? '';
     _originalDescription = widget.book.description ?? '';
+    _originalPublisher = widget.book.publisher ?? '';
+    _originalLanguage = widget.book.language ?? '';
+    _originalGenre = widget.book.genre ?? '';
 
     _titleCtrl = TextEditingController(text: _originalTitle)
       ..addListener(_onChanged);
@@ -93,6 +103,12 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     _seriesIndexCtrl = TextEditingController(text: _originalSeriesIndex)
       ..addListener(_onChanged);
     _descriptionCtrl = TextEditingController(text: _originalDescription)
+      ..addListener(_onChanged);
+    _publisherCtrl = TextEditingController(text: _originalPublisher)
+      ..addListener(_onChanged);
+    _languageCtrl = TextEditingController(text: _originalLanguage)
+      ..addListener(_onChanged);
+    _genreCtrl = TextEditingController(text: _originalGenre)
       ..addListener(_onChanged);
 
     final rows = _buildChapterList();
@@ -116,6 +132,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     _seriesCtrl.dispose();
     _seriesIndexCtrl.dispose();
     _descriptionCtrl.dispose();
+    _publisherCtrl.dispose();
+    _languageCtrl.dispose();
+    _genreCtrl.dispose();
     for (final c in _chapterCtrls) {
       c.dispose();
     }
@@ -137,6 +156,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         _seriesCtrl.text != _originalSeries ||
         _seriesIndexCtrl.text != _originalSeriesIndex ||
         _descriptionCtrl.text != _originalDescription ||
+        _publisherCtrl.text != _originalPublisher ||
+        _languageCtrl.text != _originalLanguage ||
+        _genreCtrl.text != _originalGenre ||
         _chapterCtrls.indexed.any((e) =>
             e.$2.text !=
             (_originalChapterTitles.length > e.$1
@@ -161,6 +183,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
       final newSeries = _seriesCtrl.text.trim();
       final newSeriesIndex = int.tryParse(_seriesIndexCtrl.text.trim());
       final newDescription = _descriptionCtrl.text.trim();
+      final newPublisher = _publisherCtrl.text.trim();
+      final newLanguage = _languageCtrl.text.trim();
+      final newGenre = _genreCtrl.text.trim();
 
       if (_pendingCoverPath != null) {
         final coverErrors = await MetadataWriter.applyCover(book, _pendingCoverPath!);
@@ -175,6 +200,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         narrator: newNarrator.isEmpty ? null : newNarrator,
         releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
         description: newDescription.isEmpty ? null : newDescription,
+        publisher: newPublisher.isEmpty ? null : newPublisher,
+        language: newLanguage.isEmpty ? null : newLanguage,
+        genre: newGenre.isEmpty ? null : newGenre,
       ));
       errors.addAll(metaErrors);
 
@@ -189,6 +217,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           series: newSeries.isEmpty ? null : newSeries,
           seriesIndex: newSeriesIndex,
           description: newDescription.isEmpty ? null : newDescription,
+          publisher: newPublisher.isEmpty ? null : newPublisher,
+          language: newLanguage.isEmpty ? null : newLanguage,
+          genre: newGenre.isEmpty ? null : newGenre,
         ));
       } catch (e) {
         errors.add('metadata.opf: $e');
@@ -211,6 +242,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           series: newSeries.isEmpty ? null : newSeries,
           seriesIndex: newSeriesIndex,
           description: newDescription.isEmpty ? null : newDescription,
+          publisher: newPublisher.isEmpty ? null : newPublisher,
+          language: newLanguage.isEmpty ? null : newLanguage,
+          genre: newGenre.isEmpty ? null : newGenre,
           chapters: newChapters,
           pendingCoverPath: _pendingCoverPath,
           fileTitleRaw: newTitle,
@@ -233,6 +267,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           series: newSeries.isEmpty ? null : newSeries,
           seriesIndex: newSeriesIndex,
           description: newDescription.isEmpty ? null : newDescription,
+          publisher: newPublisher.isEmpty ? null : newPublisher,
+          language: newLanguage.isEmpty ? null : newLanguage,
+          genre: newGenre.isEmpty ? null : newGenre,
           chapterNames: newNames,
           pendingCoverPath: _pendingCoverPath,
           fileTitleRaw: newTitle,
@@ -255,6 +292,9 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         _originalSeries = newSeries;
         _originalSeriesIndex = newSeriesIndex?.toString() ?? '';
         _originalDescription = newDescription;
+        _originalPublisher = newPublisher;
+        _originalLanguage = newLanguage;
+        _originalGenre = newGenre;
         _originalChapterTitles = _chapterCtrls.map((c) => c.text).toList();
       });
     } catch (e) {
@@ -501,6 +541,18 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                       style: TextStyle(fontSize: 10, color: Colors.black)),
                 ),
               ),
+            Positioned(
+              bottom: 4,
+              left: 4,
+              child: IconButton.filled(
+                iconSize: 16,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(),
+                tooltip: 'Browse for cover image',
+                onPressed: _applying ? null : _browseCover,
+                icon: const Icon(Icons.folder_open),
+              ),
+            ),
           ],
         ),
       ),
@@ -512,7 +564,20 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     return {'.jpg', '.jpeg', '.png', '.webp'}.contains(ext);
   }
 
+  Future<void> _browseCover() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      dialogTitle: 'Select cover image',
+    );
+    final path = result?.files.firstOrNull?.path;
+    if (path != null) {
+      setState(() => _pendingCoverPath = path);
+      _onChanged();
+    }
+  }
+
   Widget _buildMetadata(ThemeData theme) {
+    final book = widget.book;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -520,14 +585,20 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
         const SizedBox(height: 4),
         _editableRow('Subtitle', _subtitleCtrl),
         _editableRow('Author', _authorCtrl),
+        if (book.additionalAuthors.isNotEmpty)
+          _metaRow('Also by', book.additionalAuthors.join(', ')),
         _editableRow('Narrator', _narratorCtrl),
+        if (book.additionalNarrators.isNotEmpty)
+          _metaRow('Also narr.', book.additionalNarrators.join(', ')),
         _editableRow('Published', _releaseDateCtrl),
         _editableRow('Series', _seriesCtrl),
         _editableRow('Series #', _seriesIndexCtrl),
+        _editableRow('Publisher', _publisherCtrl),
+        _editableRow('Language', _languageCtrl),
+        _editableRow('Genre', _genreCtrl),
         _editableRow('Description', _descriptionCtrl, maxLines: 4),
-        _metaRow('Duration', _formatDuration(widget.book.duration)),
-        _metaRow('Publisher', widget.book.publisher),
-        _metaRow('Language', widget.book.language),
+        _metaRow('Duration', _formatDuration(book.duration)),
+        _metaRow('ID', book.identifier),
         _metaRow('Files', _formatFiles()),
       ],
     );

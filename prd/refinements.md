@@ -40,7 +40,44 @@ Decision points that were resolved during PRD writing. Kept here for reference.
 - **`window_manager` package**: Standard approach for Flutter Windows; avoids writing a platform channel.
 - **Folder name only**: Full path is too long for a title bar; last component is sufficient.
 
-## PRD-8: Batch editing
+## PRD-9: Publisher/language edit
+- `©pub` and `©lan` are non-standard iTunes atoms; some players may not read them. Standard alternatives (`cprt`, `©too`) exist but are less common. Kept as-is for now.
+
+## PRD-10: Cover browse button
+- `FilePicker.pickFiles(type: FileType.image)` on Windows shows all image types natively — no extension filtering needed.
+
+## PRD-11: Write chapter names to M4B
+- Deferred from this bundle. Writing `chpl` atoms requires careful byte-level surgery on the M4B container; the risk of corrupting files is non-trivial. Recommend a dedicated PRD with a round-trip test fixture before implementing.
+
+## PRD-12: Duplicate detection
+- Normalisation strips all non-alphanumeric characters. Books with very short titles (e.g. "It") may produce false positives if authors also match. Consider adding a minimum key length threshold.
+
+## PRD-13: Missing cover filter
+- Filter chips only appear after a scan (when counts > 0). If both filters are active simultaneously, books must satisfy both conditions (AND logic). OR logic may be more useful — log for follow-up.
+
+## PRD-14: Genre field
+- `Mp4Metadata.genre` field availability confirmed in audio_metadata_reader 1.4.2. `VorbisMetadata` uses `genres` (plural list).
+- `©gen` atom is the freeform genre; `gnre` is the iTunes numeric genre. Using `©gen` for maximum compatibility with freeform strings.
+
+## PRD-15: Multi-author
+- Additional authors are read-only in the UI (display only). Editing them is deferred — requires a dynamic list widget.
+
+## PRD-16: Rename folder
+- Deferred from this bundle. Requires careful handling of in-memory path references across the book list and detail screen.
+
+## PRD-17: Sort options
+- Series sort places books with no series after all series books (empty string sorts last). Books with identical series are not sub-sorted by series index — could be a follow-up.
+
+## PRD-18: Copy metadata from another book
+- Deferred from this bundle. Requires a new dialog widget and passing `allBooks` down to `BookDetailScreen`.
+
+## PRD-19: ISBN/ASIN
+- `dc:identifier` is read and preserved in OPF round-trips. Editing deferred — identifier format validation (ISBN-13 check digit, ASIN format) would be needed for a good UX.
+
+## PRD-20: OPF meta passthrough
+- `calibre:series` and `calibre:series_index` are excluded from `opfMeta` to avoid duplication. All other `<meta name=...>` entries are preserved.
+- Empty `content` attributes are skipped (consistent with existing field parsing).
+
 
 - **Blank fields skipped**: Prevents accidentally blanking a field across 50 books.
 - **Sequential apply**: Avoids file contention and makes progress reporting straightforward.

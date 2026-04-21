@@ -1,6 +1,25 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - 2025-07-10
+
+### Added
+- Publisher and Language are now editable fields (written to MP3 TPUB/TLAN, M4B ©pub/©lan, and OPF on Apply)
+- Genre field — editable in detail and batch panels; read from TCON (MP3), ©gen (M4B), GENRE (OGG/FLAC), dc:subject (OPF); written back on Apply
+- Cover art browse button — click the folder icon on the cover widget to pick an image file (in addition to drag-and-drop)
+- Multiple authors and narrators — all dc:creator entries from OPF are preserved; additional authors/narrators shown as read-only rows
+- ISBN / ASIN identifier — dc:identifier read from OPF and preserved on re-export; shown as read-only ID row
+- OPF custom meta passthrough — unknown calibre:* and other meta elements are preserved when re-exporting metadata.opf
+- Sort by Series A–Z, Narrator A–Z, Duration ↑, Duration ↓ added to sort menu
+- Duplicate book detection — books with matching normalised title+author flagged with a warning icon; Dupes filter chip in sidebar
+- Missing cover filter — books without cover art flagged with an icon; No cover filter chip in sidebar
+- Publisher, Language, Genre added to batch edit panel
+
+### Deferred to future PRDs
+- Write chapter names back to M4B atoms (PRD-11)
+- Rename folder from metadata (PRD-16)
+- Copy metadata from another book (PRD-18)
+- Editable additional authors/narrators list (PRD-15 follow-up)
+
 
 ## [1.1.0] - 2025-07-14
 

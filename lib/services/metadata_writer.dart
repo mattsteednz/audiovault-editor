@@ -90,6 +90,10 @@ class MetadataWriter {
           'xmlns:opf="http://www.idpf.org/2007/opf">')
       ..writeln('    <dc:title>${_xmlEscape(book.title ?? '')}</dc:title>');
 
+    if (book.identifier != null) {
+      buf.writeln(
+          '    <dc:identifier>${_xmlEscape(book.identifier!)}</dc:identifier>');
+    }
     if (book.subtitle != null) {
       buf.writeln('    <dc:description opf:file-as="subtitle">'
           '${_xmlEscape(book.subtitle!)}</dc:description>');
@@ -98,9 +102,17 @@ class MetadataWriter {
       buf.writeln('    <dc:creator opf:role="aut">'
           '${_xmlEscape(book.author!)}</dc:creator>');
     }
+    for (final a in book.additionalAuthors) {
+      buf.writeln(
+          '    <dc:creator opf:role="aut">${_xmlEscape(a)}</dc:creator>');
+    }
     if (book.narrator != null) {
       buf.writeln('    <dc:creator opf:role="nrt">'
           '${_xmlEscape(book.narrator!)}</dc:creator>');
+    }
+    for (final n in book.additionalNarrators) {
+      buf.writeln(
+          '    <dc:creator opf:role="nrt">${_xmlEscape(n)}</dc:creator>');
     }
     if (book.description != null) {
       buf.writeln('    <dc:description>'
@@ -114,6 +126,10 @@ class MetadataWriter {
       buf.writeln(
           '    <dc:language>${_xmlEscape(book.language!)}</dc:language>');
     }
+    if (book.genre != null) {
+      buf.writeln(
+          '    <dc:subject>${_xmlEscape(book.genre!)}</dc:subject>');
+    }
     if (book.releaseDate != null) {
       buf.writeln('    <dc:date>${_xmlEscape(book.releaseDate!)}</dc:date>');
     }
@@ -124,6 +140,10 @@ class MetadataWriter {
     if (book.seriesIndex != null) {
       buf.writeln(
           '    <meta name="calibre:series_index" content="${book.seriesIndex}"/>');
+    }
+    for (final entry in book.opfMeta.entries) {
+      buf.writeln(
+          '    <meta name="${_xmlEscape(entry.key)}" content="${_xmlEscape(entry.value)}"/>');
     }
     buf
       ..writeln('  </metadata>')

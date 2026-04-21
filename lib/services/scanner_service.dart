@@ -134,6 +134,7 @@ class ScannerService {
     String? fileDescription;
     String? filePublisher;
     String? fileLanguage;
+    String? fileGenre;
     Uint8List? coverBytes;
     Duration totalDuration = Duration.zero;
     final chapterDurations = <Duration>[];
@@ -169,10 +170,12 @@ class ScannerService {
           fileDescription = raw.comments.firstOrNull?.text.trim().nullIfEmpty;
           filePublisher = raw.publisher?.trim().nullIfEmpty;
           fileLanguage = raw.languages?.trim().nullIfEmpty;
+          fileGenre = raw.contentType?.trim().nullIfEmpty;
         } else if (raw is Mp4Metadata) {
           fileTitle = raw.album?.trim().nullIfEmpty;
           fileAuthor = raw.artist?.trim().nullIfEmpty;
           fileReleaseDate = raw.year?.year != null ? raw.year!.year.toString() : null;
+          fileGenre = raw.genre?.trim().nullIfEmpty;
         } else if (raw is VorbisMetadata) {
           fileTitle = raw.album.firstOrNull?.trim().nullIfEmpty;
           fileAuthor = raw.artist.firstOrNull?.trim().nullIfEmpty;
@@ -182,6 +185,7 @@ class ScannerService {
           filePublisher = raw.organization.firstOrNull?.trim().nullIfEmpty;
           final yr = raw.date.firstOrNull?.year;
           if (yr != null && yr > 0) fileReleaseDate = yr.toString();
+          fileGenre = raw.genres.firstOrNull?.trim().nullIfEmpty;
         }
       } catch (_) {}
     }
@@ -205,6 +209,8 @@ class ScannerService {
     final description = opf.description ?? fileDescription;
     final publisher = opf.publisher ?? filePublisher;
     final language = opf.language ?? fileLanguage;
+    final genre = opf.genre ?? fileGenre;
+    final identifier = opf.identifier;
 
     // ── Chapters ──────────────────────────────────────────────────────────
     List<Chapter> chapters = const [];
@@ -236,9 +242,14 @@ class ScannerService {
       description: description,
       publisher: publisher,
       language: language,
+      genre: genre,
+      identifier: identifier,
       releaseDate: releaseDate,
       series: opf.series,
       seriesIndex: opf.seriesIndex,
+      additionalAuthors: opf.additionalAuthors,
+      additionalNarrators: opf.additionalNarrators,
+      opfMeta: opf.opfMeta,
       fileTitleRaw: fileTitle,
       fileAuthorRaw: fileAuthor,
       fileNarratorRaw: fileNarrator,

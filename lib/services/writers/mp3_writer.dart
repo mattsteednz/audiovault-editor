@@ -17,11 +17,14 @@ class Mp3Writer {
       if (book.narrator != null) _buildTextField('TPE2', book.narrator!),
       if (book.releaseDate != null) _buildTextField('TYER', book.releaseDate!),
       if (book.description != null) _buildCommFrame(book.description!),
+      if (book.publisher != null) _buildTextField('TPUB', book.publisher!),
+      if (book.language != null) _buildTextField('TLAN', book.language!),
+      if (book.genre != null) _buildTextField('TCON', book.genre!),
     ];
 
     final result = _hasId3(bytes)
         ? _rewriteWithFrames(bytes, newFrames,
-            stripIds: {'TIT2', 'TIT3', 'TPE1', 'TPE2', 'TYER', 'COMM'})
+            stripIds: {'TIT2', 'TIT3', 'TPE1', 'TPE2', 'TYER', 'COMM', 'TPUB', 'TLAN', 'TCON'})
         : _prepend(bytes, _mergeFrames(newFrames));
     await file.writeAsBytes(result);
   }

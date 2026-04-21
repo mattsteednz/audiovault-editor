@@ -49,6 +49,9 @@ class Mp4Writer {
         _buildTextAtom('\u00a9day', book.releaseDate!),
       if (book.description != null)
         _buildTextAtom('\u00a9cmt', book.description!),
+      if (book.publisher != null) _buildTextAtom('\u00a9pub', book.publisher!),
+      if (book.language != null) _buildTextAtom('\u00a9lan', book.language!),
+      if (book.genre != null) _buildTextAtom('\u00a9gen', book.genre!),
     ];
     if (atoms.isEmpty) return moov;
     return _injectIlstAtoms(moov, atoms);

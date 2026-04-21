@@ -26,10 +26,15 @@ class Audiobook {
   final String? description;
   final String? publisher;
   final String? language;
+  final String? genre;
+  final String? identifier;
   final String? releaseDate;
   final String? series;
   final int? seriesIndex;
   final String? pendingCoverPath;
+  final List<String> additionalAuthors;
+  final List<String> additionalNarrators;
+  final Map<String, String> opfMeta;
 
   /// Raw values read directly from audio file tags, before OPF override.
   final String? fileTitleRaw;
@@ -54,10 +59,15 @@ class Audiobook {
     this.description,
     this.publisher,
     this.language,
+    this.genre,
+    this.identifier,
     this.releaseDate,
     this.series,
     this.seriesIndex,
     this.pendingCoverPath,
+    this.additionalAuthors = const [],
+    this.additionalNarrators = const [],
+    this.opfMeta = const {},
     this.fileTitleRaw,
     this.fileAuthorRaw,
     this.fileNarratorRaw,
@@ -81,6 +91,8 @@ class Audiobook {
     Object? description = _unset,
     Object? publisher = _unset,
     Object? language = _unset,
+    Object? genre = _unset,
+    Object? identifier = _unset,
     Object? duration = _unset,
     List<Chapter>? chapters,
     List<String>? chapterNames,
@@ -92,6 +104,9 @@ class Audiobook {
     Object? fileNarratorRaw = _unset,
     Object? fileReleaseDateRaw = _unset,
     Object? fileSubtitleRaw = _unset,
+    List<String>? additionalAuthors,
+    List<String>? additionalNarrators,
+    Map<String, String>? opfMeta,
   }) =>
       Audiobook(
         title: title == _unset ? this.title : title as String?,
@@ -114,6 +129,8 @@ class Audiobook {
             description == _unset ? this.description : description as String?,
         publisher: publisher == _unset ? this.publisher : publisher as String?,
         language: language == _unset ? this.language : language as String?,
+        genre: genre == _unset ? this.genre : genre as String?,
+        identifier: identifier == _unset ? this.identifier : identifier as String?,
         releaseDate:
             releaseDate == _unset ? this.releaseDate : releaseDate as String?,
         series: series == _unset ? this.series : series as String?,
@@ -122,6 +139,9 @@ class Audiobook {
         pendingCoverPath: pendingCoverPath == _unset
             ? this.pendingCoverPath
             : pendingCoverPath as String?,
+        additionalAuthors: additionalAuthors ?? this.additionalAuthors,
+        additionalNarrators: additionalNarrators ?? this.additionalNarrators,
+        opfMeta: opfMeta ?? this.opfMeta,
         fileTitleRaw:
             fileTitleRaw == _unset ? this.fileTitleRaw : fileTitleRaw as String?,
         fileAuthorRaw: fileAuthorRaw == _unset

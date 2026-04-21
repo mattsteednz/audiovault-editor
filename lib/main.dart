@@ -166,6 +166,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     PopupMenuItem(
                         value: SortOrder.authorDesc,
                         child: Text('Author Z–A')),
+                    PopupMenuItem(
+                        value: SortOrder.seriesAsc, child: Text('Series A–Z')),
+                    PopupMenuItem(
+                        value: SortOrder.narratorAsc,
+                        child: Text('Narrator A–Z')),
+                    PopupMenuItem(
+                        value: SortOrder.durationAsc,
+                        child: Text('Duration ↑')),
+                    PopupMenuItem(
+                        value: SortOrder.durationDesc,
+                        child: Text('Duration ↓')),
                   ],
                 ),
               ],
@@ -175,6 +186,32 @@ class _HomeScreenState extends State<HomeScreen> {
               '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
               style: const TextStyle(fontSize: 11, color: Colors.grey),
             ),
+            if (_ctrl.duplicateCount > 0 || _ctrl.missingCoverCount > 0) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                children: [
+                  if (_ctrl.duplicateCount > 0)
+                    FilterChip(
+                      label: Text('Dupes (${_ctrl.duplicateCount})'),
+                      selected: _ctrl.showDuplicatesOnly,
+                      onSelected: (_) => _ctrl.toggleShowDuplicates(),
+                      labelStyle: const TextStyle(fontSize: 11),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  if (_ctrl.missingCoverCount > 0)
+                    FilterChip(
+                      label: Text('No cover (${_ctrl.missingCoverCount})'),
+                      selected: _ctrl.showMissingCoverOnly,
+                      onSelected: (_) => _ctrl.toggleShowMissingCover(),
+                      labelStyle: const TextStyle(fontSize: 11),
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+            ],
           ],
           if (_ctrl.scanning)
             const Padding(
@@ -220,11 +257,27 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          subtitle: Text(
-            book.author ?? 'Unknown author',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12),
+          subtitle: Row(
+            children: [
+              if (_ctrl.duplicatePaths.contains(book.path))
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: Icon(Icons.warning_amber, size: 12, color: Colors.amber),
+                ),
+              if (_ctrl.missingCoverPaths.contains(book.path))
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: Icon(Icons.image_not_supported, size: 12, color: Colors.grey),
+                ),
+              Expanded(
+                child: Text(
+                  book.author ?? 'Unknown author',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
           ),
           dense: true,
         );

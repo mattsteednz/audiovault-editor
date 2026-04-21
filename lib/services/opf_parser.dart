@@ -7,9 +7,14 @@ class OpfMetadata {
   final String? description;
   final String? publisher;
   final String? language;
+  final String? genre;
+  final String? identifier;
   final String? releaseDate;
   final String? series;
   final int? seriesIndex;
+  final List<String> additionalAuthors;
+  final List<String> additionalNarrators;
+  final Map<String, String> opfMeta;
 
   const OpfMetadata({
     this.title,
@@ -18,9 +23,14 @@ class OpfMetadata {
     this.description,
     this.publisher,
     this.language,
+    this.genre,
+    this.identifier,
     this.releaseDate,
     this.series,
     this.seriesIndex,
+    this.additionalAuthors = const [],
+    this.additionalNarrators = const [],
+    this.opfMeta = const {},
   });
 }
 
@@ -32,14 +42,17 @@ OpfMetadata parseOpf(String xmlContent) {
     if (metadata == null) return const OpfMetadata();
 
     String? title;
-    String? author;
-    String? narrator;
+    final authors = <String>[];
+    final narrators = <String>[];
     String? description;
     String? publisher;
     String? language;
+    String? genre;
+    String? identifier;
     String? releaseDate;
     String? series;
     int? seriesIndex;
+    final opfMeta = <String, String>{};
 
     title = _dcText(metadata, 'title');
 
@@ -49,13 +62,15 @@ OpfMetadata parseOpf(String xmlContent) {
           'aut';
       final text = el.innerText.trim();
       if (text.isEmpty) continue;
-      if (role == 'aut' && author == null) author = text;
-      if (role == 'nrt' && narrator == null) narrator = text;
+      if (role == 'aut') authors.add(text);
+      if (role == 'nrt') narrators.add(text);
     }
 
     description = _dcText(metadata, 'description');
     publisher = _dcText(metadata, 'publisher');
     language = _dcText(metadata, 'language');
+    genre = _dcText(metadata, 'subject');
+    identifier = _dcText(metadata, 'identifier');
 
     final dateText = _dcText(metadata, 'date');
     if (dateText != null && dateText.length >= 4) {
@@ -67,23 +82,31 @@ OpfMetadata parseOpf(String xmlContent) {
       final name = el.getAttribute('name') ?? '';
       final content = el.getAttribute('content') ?? '';
       if (content.isEmpty) continue;
-      if (name == 'calibre:series') series = content;
-      if (name == 'calibre:series_index') {
+      if (name == 'calibre:series') {
+        series = content;
+      } else if (name == 'calibre:series_index') {
         final d = double.tryParse(content);
         if (d != null) seriesIndex = d.round();
+      } else if (name.isNotEmpty) {
+        opfMeta[name] = content;
       }
     }
 
     return OpfMetadata(
       title: title,
-      author: author,
-      narrator: narrator,
+      author: authors.firstOrNull,
+      narrator: narrators.firstOrNull,
       description: description,
       publisher: publisher,
       language: language,
+      genre: genre,
+      identifier: identifier,
       releaseDate: releaseDate,
       series: series,
       seriesIndex: seriesIndex,
+      additionalAuthors: authors.length > 1 ? authors.sublist(1) : const [],
+      additionalNarrators: narrators.length > 1 ? narrators.sublist(1) : const [],
+      opfMeta: opfMeta,
     );
   } catch (_) {
     return const OpfMetadata();
