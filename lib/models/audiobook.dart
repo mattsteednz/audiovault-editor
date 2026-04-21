@@ -35,6 +35,9 @@ class Audiobook {
   final List<String> additionalAuthors;
   final List<String> additionalNarrators;
   final Map<String, String> opfMeta;
+  final bool hasOpf;
+  final bool hasCue;
+  final bool hasEmbeddedTags;
 
   /// Raw values read directly from audio file tags, before OPF override.
   final String? fileTitleRaw;
@@ -68,6 +71,9 @@ class Audiobook {
     this.additionalAuthors = const [],
     this.additionalNarrators = const [],
     this.opfMeta = const {},
+    this.hasOpf = false,
+    this.hasCue = false,
+    this.hasEmbeddedTags = false,
     this.fileTitleRaw,
     this.fileAuthorRaw,
     this.fileNarratorRaw,
@@ -107,6 +113,9 @@ class Audiobook {
     List<String>? additionalAuthors,
     List<String>? additionalNarrators,
     Map<String, String>? opfMeta,
+    bool? hasOpf,
+    bool? hasCue,
+    bool? hasEmbeddedTags,
   }) =>
       Audiobook(
         title: title == _unset ? this.title : title as String?,
@@ -142,6 +151,9 @@ class Audiobook {
         additionalAuthors: additionalAuthors ?? this.additionalAuthors,
         additionalNarrators: additionalNarrators ?? this.additionalNarrators,
         opfMeta: opfMeta ?? this.opfMeta,
+        hasOpf: hasOpf ?? this.hasOpf,
+        hasCue: hasCue ?? this.hasCue,
+        hasEmbeddedTags: hasEmbeddedTags ?? this.hasEmbeddedTags,
         fileTitleRaw:
             fileTitleRaw == _unset ? this.fileTitleRaw : fileTitleRaw as String?,
         fileAuthorRaw: fileAuthorRaw == _unset

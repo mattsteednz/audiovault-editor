@@ -192,12 +192,14 @@ class ScannerService {
 
     // ── OPF — wins over file tags for all mapped fields ───────────────────
     OpfMetadata opf = const OpfMetadata();
+    bool hasOpf = false;
     final opfFile = allFiles
         .where((f) => p.basename(f.path).toLowerCase() == 'metadata.opf')
         .firstOrNull;
     if (opfFile != null) {
       try {
         opf = parseOpf(await opfFile.readAsString());
+        hasOpf = true;
       } catch (_) {}
     }
 
@@ -226,6 +228,9 @@ class ScannerService {
         ? audioFiles.map((f) => p.basenameWithoutExtension(f)).toList()
         : const <String>[];
 
+    final hasEmbeddedTags = fileTitle != null || fileAuthor != null;
+    final hasCue = cueSheet != null;
+
     return Audiobook(
       title: title,
       author: author,
@@ -250,6 +255,9 @@ class ScannerService {
       additionalAuthors: opf.additionalAuthors,
       additionalNarrators: opf.additionalNarrators,
       opfMeta: opf.opfMeta,
+      hasOpf: hasOpf,
+      hasCue: hasCue,
+      hasEmbeddedTags: hasEmbeddedTags,
       fileTitleRaw: fileTitle,
       fileAuthorRaw: fileAuthor,
       fileNarratorRaw: fileNarrator,

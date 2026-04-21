@@ -26,7 +26,9 @@ class BookDetailScreen extends StatefulWidget {
   State<BookDetailScreen> createState() => _BookDetailScreenState();
 }
 
-class _BookDetailScreenState extends State<BookDetailScreen> {
+class _BookDetailScreenState extends State<BookDetailScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabCtrl;
   late TextEditingController _titleCtrl;
   late TextEditingController _subtitleCtrl;
   late TextEditingController _authorCtrl;
@@ -63,6 +65,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
     _initControllers();
   }
 
@@ -142,6 +145,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
 
   @override
   void dispose() {
+    _tabCtrl.dispose();
     _disposeControllers();
     super.dispose();
   }
@@ -315,110 +319,222 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final chapters = _chapters;
 
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Header: cover + read-only summary ──
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildCover(),
               const SizedBox(width: 24),
-              Expanded(child: _buildMetadata(theme)),
+              Expanded(child: _buildSummary(theme)),
             ],
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Text('Chapters (${chapters.length})',
-                  style: theme.textTheme.titleMedium),
-              const Spacer(),
-              ToggleButtons(
-                isSelected: [!_showFileMetadata, _showFileMetadata],
-                onPressed: (i) {
-                  final showFile = i == 1;
-                  // Remove listeners while updating to avoid false dirty
-                  _titleCtrl.removeListener(_onChanged);
-                  _subtitleCtrl.removeListener(_onChanged);
-                  _authorCtrl.removeListener(_onChanged);
-                  _narratorCtrl.removeListener(_onChanged);
-                  _releaseDateCtrl.removeListener(_onChanged);
-                  final b = widget.book;
-                  _titleCtrl.text = showFile ? (b.fileTitleRaw ?? b.title ?? '') : (b.title ?? '');
-                  _subtitleCtrl.text = showFile ? (b.fileSubtitleRaw ?? b.subtitle ?? '') : (b.subtitle ?? '');
-                  _authorCtrl.text = showFile ? (b.fileAuthorRaw ?? b.author ?? '') : (b.author ?? '');
-                  _narratorCtrl.text = showFile ? (b.fileNarratorRaw ?? b.narrator ?? '') : (b.narrator ?? '');
-                  _releaseDateCtrl.text = showFile ? (b.fileReleaseDateRaw ?? b.releaseDate ?? '') : (b.releaseDate ?? '');
-                  _titleCtrl.addListener(_onChanged);
-                  _subtitleCtrl.addListener(_onChanged);
-                  _authorCtrl.addListener(_onChanged);
-                  _narratorCtrl.addListener(_onChanged);
-                  _releaseDateCtrl.addListener(_onChanged);
-                  setState(() => _showFileMetadata = showFile);
-                },
-                borderRadius: BorderRadius.circular(6),
-                constraints: const BoxConstraints(minWidth: 64, minHeight: 32),
-                children: const [
-                  Text('OPF / merged', style: TextStyle(fontSize: 12)),
-                  Text('File tags', style: TextStyle(fontSize: 12)),
-                ],
-              ),
-              const SizedBox(width: 8),
-              PopupMenuButton<String>(
-                tooltip: 'Export',
-                child: OutlinedButton.icon(
-                  onPressed: null,
-                  icon: const Icon(Icons.upload_file, size: 18),
-                  label: const Text('Export'),
-                ),
-                onSelected: (value) async {
-                  try {
-                    if (value == 'opf') {
-                      await MetadataWriter.exportOpf(widget.book);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('Exported metadata.opf to ${widget.book.path}'),
-                        ));
-                      }
-                    } else {
-                      await MetadataWriter.exportCover(widget.book);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                          content: Text('Exported cover.jpg to ${widget.book.path}'),
-                        ));
-                      }
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        backgroundColor: Colors.red[900],
-                        content: Text('Export failed: $e'),
-                      ));
-                    }
-                  }
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'opf', child: Text('Export OPF')),
-                  PopupMenuItem(
-                    value: 'cover',
-                    enabled: widget.book.coverImagePath != null ||
-                        widget.book.coverImageBytes != null,
-                    child: const Text('Export cover.jpg'),
-                  ),
-                ],
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'Undo last apply',
-                onPressed: widget.onUndo,
-                icon: const Icon(Icons.undo),
-              ),
-              IconButton(
-                tooltip: 'Rescan from disk',
-                onPressed: (_applying || _rescanning) ? null : () async {
+          const SizedBox(height: 12),
+          // ── Action bar ──
+          _buildActionBar(theme),
+          const SizedBox(height: 8),
+          // ── Tabs ──
+          TabBar(
+            controller: _tabCtrl,
+            tabs: [
+              const Tab(text: 'Book'),
+              Tab(text: 'Chapters (${_chapters.length})'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _tabCtrl,
+              children: [
+                _buildBookTab(theme),
+                _buildChaptersTab(theme),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _buildTitleLine() {
+    final t = _titleCtrl.text.trim();
+    final s = _subtitleCtrl.text.trim();
+    final y = _releaseDateCtrl.text.trim();
+    final buf = StringBuffer(t.isEmpty ? 'Untitled' : t);
+    if (s.isNotEmpty) buf.write(': $s');
+    if (y.isNotEmpty) buf.write(' ($y)');
+    return buf.toString();
+  }
+
+  Widget _buildSummary(ThemeData theme) {
+    final book = widget.book;
+    final sources = <String>[
+      if (book.hasEmbeddedTags) 'embedded',
+      if (book.hasOpf) 'metadata.opf',
+      if (book.hasCue) 'cue',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(_buildTitleLine(),
+            style: theme.textTheme.titleLarge,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis),
+        const SizedBox(height: 4),
+        if (_authorCtrl.text.trim().isNotEmpty)
+          _summaryRow('Author', _authorCtrl.text.trim()),
+        if (_narratorCtrl.text.trim().isNotEmpty)
+          _summaryRow('Narrated by', _narratorCtrl.text.trim()),
+        _summaryRow('Duration', _formatDuration(book.duration) ?? '—'),
+        _summaryRow('Files', _formatFiles()),
+        if (sources.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                const Text('Metadata: ',
+                    style: TextStyle(color: Colors.grey, fontSize: 12)),
+                ...sources.map((s) => Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Chip(
+                        label: Text(s),
+                        labelStyle: const TextStyle(fontSize: 10),
+                        padding: EdgeInsets.zero,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    )),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _summaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 90,
+            child: Text('$label:',
+                style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          ),
+          Expanded(
+            child: Text(value,
+                style: const TextStyle(fontSize: 13),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionBar(ThemeData theme) {
+    return Row(
+      children: [
+        ToggleButtons(
+          isSelected: [!_showFileMetadata, _showFileMetadata],
+          onPressed: (i) {
+            final showFile = i == 1;
+            _titleCtrl.removeListener(_onChanged);
+            _subtitleCtrl.removeListener(_onChanged);
+            _authorCtrl.removeListener(_onChanged);
+            _narratorCtrl.removeListener(_onChanged);
+            _releaseDateCtrl.removeListener(_onChanged);
+            final b = widget.book;
+            _titleCtrl.text = showFile
+                ? (b.fileTitleRaw ?? b.title ?? '')
+                : (b.title ?? '');
+            _subtitleCtrl.text = showFile
+                ? (b.fileSubtitleRaw ?? b.subtitle ?? '')
+                : (b.subtitle ?? '');
+            _authorCtrl.text = showFile
+                ? (b.fileAuthorRaw ?? b.author ?? '')
+                : (b.author ?? '');
+            _narratorCtrl.text = showFile
+                ? (b.fileNarratorRaw ?? b.narrator ?? '')
+                : (b.narrator ?? '');
+            _releaseDateCtrl.text = showFile
+                ? (b.fileReleaseDateRaw ?? b.releaseDate ?? '')
+                : (b.releaseDate ?? '');
+            _titleCtrl.addListener(_onChanged);
+            _subtitleCtrl.addListener(_onChanged);
+            _authorCtrl.addListener(_onChanged);
+            _narratorCtrl.addListener(_onChanged);
+            _releaseDateCtrl.addListener(_onChanged);
+            setState(() => _showFileMetadata = showFile);
+          },
+          borderRadius: BorderRadius.circular(6),
+          constraints: const BoxConstraints(minWidth: 64, minHeight: 32),
+          children: const [
+            Text('OPF / merged', style: TextStyle(fontSize: 12)),
+            Text('File tags', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+        const Spacer(),
+        PopupMenuButton<String>(
+          tooltip: 'Export',
+          child: OutlinedButton.icon(
+            onPressed: null,
+            icon: const Icon(Icons.upload_file, size: 18),
+            label: const Text('Export'),
+          ),
+          onSelected: (value) async {
+            try {
+              if (value == 'opf') {
+                await MetadataWriter.exportOpf(widget.book);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content:
+                        Text('Exported metadata.opf to ${widget.book.path}'),
+                  ));
+                }
+              } else {
+                await MetadataWriter.exportCover(widget.book);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content:
+                        Text('Exported cover.jpg to ${widget.book.path}'),
+                  ));
+                }
+              }
+            } catch (e) {
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  backgroundColor: Colors.red[900],
+                  content: Text('Export failed: $e'),
+                ));
+              }
+            }
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'opf', child: Text('Export OPF')),
+            PopupMenuItem(
+              value: 'cover',
+              enabled: widget.book.coverImagePath != null ||
+                  widget.book.coverImageBytes != null,
+              child: const Text('Export cover.jpg'),
+            ),
+          ],
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          tooltip: 'Undo last apply',
+          onPressed: widget.onUndo,
+          icon: const Icon(Icons.undo),
+        ),
+        IconButton(
+          tooltip: 'Rescan from disk',
+          onPressed: (_applying || _rescanning)
+              ? null
+              : () async {
                   if (_isDirty) {
                     final confirm = await showDialog<bool>(
                       context: context,
@@ -445,36 +561,66 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
                     if (mounted) setState(() => _rescanning = false);
                   }
                 },
-                icon: _rescanning
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.refresh),
-              ),
-              FilledButton.icon(
-                onPressed: (_isDirty && !_applying) ? _apply : null,
-                icon: _applying
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.check, size: 18),
-                label: const Text('Apply'),
-              ),
-              if (_isDirty)
-                Padding(
-                  padding: const EdgeInsets.only(left: 12),
-                  child: Text('Unsaved changes',
-                      style: TextStyle(
-                          fontSize: 12, color: theme.colorScheme.error)),
-                ),
-            ],
+          icon: _rescanning
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.refresh),
+        ),
+        FilledButton.icon(
+          onPressed: (_isDirty && !_applying) ? _apply : null,
+          icon: _applying
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.check, size: 18),
+          label: const Text('Apply'),
+        ),
+        if (_isDirty)
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Text('Unsaved changes',
+                style:
+                    TextStyle(fontSize: 12, color: theme.colorScheme.error)),
           ),
-          const SizedBox(height: 8),
-          Expanded(child: _buildChapterTable(chapters, theme)),
+      ],
+    );
+  }
+
+  Widget _buildBookTab(ThemeData theme) {
+    final book = widget.book;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _editableRow('Title', _titleCtrl, style: theme.textTheme.titleLarge),
+          const SizedBox(height: 4),
+          _editableRow('Subtitle', _subtitleCtrl),
+          _editableRow('Author', _authorCtrl),
+          if (book.additionalAuthors.isNotEmpty)
+            _metaRow('Also by', book.additionalAuthors.join(', ')),
+          _editableRow('Narrator', _narratorCtrl),
+          if (book.additionalNarrators.isNotEmpty)
+            _metaRow('Also narr.', book.additionalNarrators.join(', ')),
+          _editableRow('Published', _releaseDateCtrl),
+          _editableRow('Series', _seriesCtrl),
+          _editableRow('Series #', _seriesIndexCtrl),
+          _editableRow('Publisher', _publisherCtrl),
+          _editableRow('Language', _languageCtrl),
+          _editableRow('Genre', _genreCtrl),
+          _editableRow('Description', _descriptionCtrl, maxLines: 4),
+          _metaRow('ID', book.identifier),
         ],
       ),
     );
+  }
+
+  Widget _buildChaptersTab(ThemeData theme) {
+    return _buildChapterTable(_chapters, theme);
   }
 
   Widget _buildCover() {
@@ -576,35 +722,7 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     }
   }
 
-  Widget _buildMetadata(ThemeData theme) {
-    final book = widget.book;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _editableRow('Title', _titleCtrl, style: theme.textTheme.titleLarge),
-        const SizedBox(height: 4),
-        _editableRow('Subtitle', _subtitleCtrl),
-        _editableRow('Author', _authorCtrl),
-        if (book.additionalAuthors.isNotEmpty)
-          _metaRow('Also by', book.additionalAuthors.join(', ')),
-        _editableRow('Narrator', _narratorCtrl),
-        if (book.additionalNarrators.isNotEmpty)
-          _metaRow('Also narr.', book.additionalNarrators.join(', ')),
-        _editableRow('Published', _releaseDateCtrl),
-        _editableRow('Series', _seriesCtrl),
-        _editableRow('Series #', _seriesIndexCtrl),
-        _editableRow('Publisher', _publisherCtrl),
-        _editableRow('Language', _languageCtrl),
-        _editableRow('Genre', _genreCtrl),
-        _editableRow('Description', _descriptionCtrl, maxLines: 4),
-        _metaRow('Duration', _formatDuration(book.duration)),
-        _metaRow('ID', book.identifier),
-        _metaRow('Files', _formatFiles()),
-      ],
-    );
-  }
-
-  Widget _editableRow(String label, TextEditingController ctrl,
+Widget _editableRow(String label, TextEditingController ctrl,
       {TextStyle? style, int maxLines = 1}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
