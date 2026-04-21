@@ -13,7 +13,9 @@ class MetadataWriter {
   }
 
   /// Embeds title, author, narrator, and year into all audio files.
-  static Future<void> applyMetadata(Audiobook book) async {
+  /// Returns a list of per-file error strings; empty = full success.
+  static Future<List<String>> applyMetadata(Audiobook book) async {
+    final errors = <String>[];
     for (final filePath in book.audioFiles) {
       final ext = p.extension(filePath).toLowerCase();
       try {
@@ -22,20 +24,20 @@ class MetadataWriter {
         } else if (ext == '.m4b' || ext == '.m4a' || ext == '.aac') {
           await _writeMetadataMp4(filePath, book);
         }
-        // FLAC/OGG text tag rewriting not yet implemented
-      } catch (_) {}
+      } catch (e) {
+        errors.add('${p.basename(filePath)}: $e');
+      }
     }
+    return errors;
   }
 
   /// Writes cover.jpg to the book folder and embeds the cover into all audio files.
-  static Future<void> applyCover(Audiobook book, String imagePath) async {    final imageBytes = await File(imagePath).readAsBytes();
+  /// Returns a list of per-file error strings; empty = full success.
+  static Future<List<String>> applyCover(Audiobook book, String imagePath) async {
+    final errors = <String>[];
+    final imageBytes = await File(imagePath).readAsBytes();
     final jpegBytes = await toJpeg(imageBytes);
-
-    // Write cover.jpg
-    final coverOut = File(p.join(book.path, 'cover.jpg'));
-    await coverOut.writeAsBytes(jpegBytes);
-
-    // Embed into each audio file
+    await File(p.join(book.path, 'cover.jpg')).writeAsBytes(jpegBytes);
     for (final filePath in book.audioFiles) {
       final ext = p.extension(filePath).toLowerCase();
       try {
@@ -49,9 +51,10 @@ class MetadataWriter {
           await _embedCoverOgg(filePath, jpegBytes);
         }
       } catch (e) {
-        // Continue with remaining files if one fails
+        errors.add('${p.basename(filePath)}: $e');
       }
     }
+    return errors;
   }
 
   // ── MP3 ID3v2 cover embedding ─────────────────────────────────────────────
@@ -176,16 +179,18 @@ class MetadataWriter {
     final bytes = await file.readAsBytes();
 
     final newFrames = <Uint8List>[];
-    if (book.title.isNotEmpty) newFrames.add(_buildId3TextField('TIT2', book.title));
+    if (book.title != null && book.title!.isNotEmpty) newFrames.add(_buildId3TextField('TIT2', book.title!));
+    if (book.subtitle != null) newFrames.add(_buildId3TextField('TIT3', book.subtitle!));
     if (book.author != null) newFrames.add(_buildId3TextField('TPE1', book.author!));
     if (book.narrator != null) newFrames.add(_buildId3TextField('TPE2', book.narrator!));
     if (book.releaseDate != null) newFrames.add(_buildId3TextField('TYER', book.releaseDate!));
+    if (book.description != null) newFrames.add(_buildId3CommFrame(book.description!));
 
     Uint8List result;
     if (bytes.length >= 3 &&
         bytes[0] == 0x49 && bytes[1] == 0x44 && bytes[2] == 0x33) {
       result = _rewriteId3WithFrames(bytes, newFrames,
-          stripIds: {'TIT2', 'TPE1', 'TPE2', 'TYER'});
+          stripIds: {'TIT2', 'TIT3', 'TPE1', 'TPE2', 'TYER', 'COMM'});
     } else {
       result = _prependId3(bytes, _mergeFrames(newFrames));
     }
@@ -203,6 +208,19 @@ class MetadataWriter {
     frame[7] = sz & 0xFF;
     frame[8] = 0x00; frame[9] = 0x00;
     frame.setRange(10, frame.length, encoded);
+    return frame;
+  }
+
+  static Uint8List _buildId3CommFrame(String text) {
+    // COMM: encoding(1) + language(3) + short_desc(1=null) + text
+    final textBytes = Uint8List.fromList([0x00, 0x65, 0x6E, 0x67, 0x00, ...text.codeUnits]);
+    final frame = Uint8List(10 + textBytes.length);
+    frame[0] = 0x43; frame[1] = 0x4F; frame[2] = 0x4D; frame[3] = 0x4D; // COMM
+    final sz = textBytes.length;
+    frame[4] = (sz >> 24) & 0xFF; frame[5] = (sz >> 16) & 0xFF;
+    frame[6] = (sz >> 8) & 0xFF; frame[7] = sz & 0xFF;
+    frame[8] = 0x00; frame[9] = 0x00;
+    frame.setRange(10, frame.length, textBytes);
     return frame;
   }
 
@@ -280,10 +298,12 @@ class MetadataWriter {
   static Uint8List _injectTextAtomsInMoov(Uint8List moov, Audiobook book) {
     // Build ilst atoms for each text field
     final atoms = <Uint8List>[];
-    if (book.title.isNotEmpty) atoms.add(_buildMp4TextAtom('\u00a9nam', book.title));
+    if (book.title != null && book.title!.isNotEmpty) atoms.add(_buildMp4TextAtom('\u00a9alb', book.title!));
+    if (book.subtitle != null) atoms.add(_buildMp4TextAtom('\u00a9nam', book.subtitle!));
     if (book.author != null) atoms.add(_buildMp4TextAtom('\u00a9ART', book.author!));
     if (book.narrator != null) atoms.add(_buildMp4TextAtom('\u00a9wrt', book.narrator!));
     if (book.releaseDate != null) atoms.add(_buildMp4TextAtom('\u00a9day', book.releaseDate!));
+    if (book.description != null) atoms.add(_buildMp4TextAtom('\u00a9cmt', book.description!));
     if (atoms.isEmpty) return moov;
 
     final udtaIdx = _findBox(moov, 0, moov.length, 'udta');
@@ -951,7 +971,11 @@ class MetadataWriter {
         'unique-identifier="uid">');
     buf.writeln('  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" '
         'xmlns:opf="http://www.idpf.org/2007/opf">');
-    buf.writeln('    <dc:title>${_xmlEscape(book.title)}</dc:title>');
+    buf.writeln('    <dc:title>${_xmlEscape(book.title ?? '')}</dc:title>');
+    if (book.subtitle != null) {
+      buf.writeln('    <dc:description opf:file-as="subtitle">'
+          '${_xmlEscape(book.subtitle!)}</dc:description>');
+    }
     if (book.author != null) {
       buf.writeln('    <dc:creator opf:role="aut">'
           '${_xmlEscape(book.author!)}</dc:creator>');

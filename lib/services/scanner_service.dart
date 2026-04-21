@@ -25,6 +25,11 @@ class ScannerService {
   static const _imageExtensions = {'.jpg', '.jpeg', '.png', '.webp'};
   static const int maxScanDepth = 3;
 
+  /// Re-scans a single book folder and returns the updated [Audiobook], or
+  /// null if no audio files were found.
+  Future<Audiobook?> scanBook(String folderPath) =>
+      _scanSubfolder(Directory(folderPath));
+
   Future<List<Audiobook>> scanFolder(String folderPath,
       {void Function(Audiobook)? onBookFound}) async {
     final dir = Directory(folderPath);
@@ -45,14 +50,17 @@ class ScannerService {
       books.addAll(results);
     }
 
-    // Also check if the root folder itself is a book
     final rootBook = await _scanSubfolder(dir);
     if (rootBook != null) {
       onBookFound?.call(rootBook);
       books.add(rootBook);
     }
 
-    books.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    books.sort((a, b) {
+      final at = a.title ?? '';
+      final bt = b.title ?? '';
+      return at.toLowerCase().compareTo(bt.toLowerCase());
+    });
     return books;
   }
 
@@ -65,7 +73,7 @@ class ScannerService {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list().toList();
-    } catch (e) {
+    } catch (_) {
       return const [];
     }
     final subdirs = entries
@@ -83,12 +91,10 @@ class ScannerService {
   }
 
   Future<Audiobook?> _scanSubfolder(Directory dir) async {
-    final name = p.basename(dir.path);
-
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list().toList();
-    } catch (e) {
+    } catch (_) {
       return null;
     }
 
@@ -103,6 +109,7 @@ class ScannerService {
       ..sort(_naturalSort);
     final imageFiles = allFiles.where((f) => _isImage(f.path)).toList();
 
+    // CUE sheet — only used for file ordering and chapter timestamps
     _CueSheet? cueSheet;
     final cueFiles = allFiles
         .where((f) => p.extension(f.path).toLowerCase() == '.cue')
@@ -112,25 +119,74 @@ class ScannerService {
         cueSheet = _parseCueSheet(await cueFiles.first.readAsString(), dir.path);
       } catch (_) {}
     }
-
     if (cueSheet != null && cueSheet.audioFiles.isNotEmpty) {
-      audioFiles
-        ..clear()
-        ..addAll(cueSheet.audioFiles);
+      audioFiles..clear()..addAll(cueSheet.audioFiles);
     }
 
     if (audioFiles.isEmpty) return null;
 
-    final coverPath = _pickBestCover(imageFiles);
-    String title = name;
-    String? author;
-    String? narrator;
+    // ── Read raw file tags from the first audio file ──────────────────────
+    String? fileTitle;
+    String? fileAuthor;
+    String? fileNarrator;
+    String? fileSubtitle;
+    String? fileReleaseDate;
+    String? fileDescription;
+    String? filePublisher;
+    String? fileLanguage;
+    Uint8List? coverBytes;
     Duration totalDuration = Duration.zero;
     final chapterDurations = <Duration>[];
-    final rawTitles = <String?>[];
-    Uint8List? coverBytes;
-    bool foundCoverInMetadata = false;
 
+    final coverPath = _pickBestCover(imageFiles);
+
+    for (final filePath in audioFiles) {
+      try {
+        final needArt = coverPath == null && coverBytes == null;
+        final meta = readMetadata(File(filePath), getImage: needArt);
+        chapterDurations.add(meta.duration ?? Duration.zero);
+        totalDuration += meta.duration ?? Duration.zero;
+        if (needArt && meta.pictures.isNotEmpty) {
+          coverBytes = meta.pictures.first.bytes;
+        }
+      } catch (_) {
+        chapterDurations.add(Duration.zero);
+      }
+    }
+
+    // Read extended tags from first file only
+    if (audioFiles.isNotEmpty) {
+      try {
+        final raw = readAllMetadata(File(audioFiles.first), getImage: false);
+        if (raw is Mp3Metadata) {
+          fileTitle = raw.album?.trim().nullIfEmpty;
+          fileAuthor = raw.leadPerformer?.trim().nullIfEmpty;
+          fileNarrator = raw.bandOrOrchestra?.trim().nullIfEmpty;
+          fileSubtitle = raw.subtitle?.trim().nullIfEmpty;
+          fileReleaseDate = raw.year != null && raw.year! > 0
+              ? raw.year.toString()
+              : null;
+          fileDescription = raw.comments.firstOrNull?.text.trim().nullIfEmpty;
+          filePublisher = raw.publisher?.trim().nullIfEmpty;
+          fileLanguage = raw.languages?.trim().nullIfEmpty;
+        } else if (raw is Mp4Metadata) {
+          fileTitle = raw.album?.trim().nullIfEmpty;
+          fileAuthor = raw.artist?.trim().nullIfEmpty;
+          fileReleaseDate = raw.year?.year != null ? raw.year!.year.toString() : null;
+        } else if (raw is VorbisMetadata) {
+          fileTitle = raw.album.firstOrNull?.trim().nullIfEmpty;
+          fileAuthor = raw.artist.firstOrNull?.trim().nullIfEmpty;
+          fileNarrator = raw.performer.firstOrNull?.trim().nullIfEmpty;
+          fileDescription = raw.description.firstOrNull?.trim().nullIfEmpty
+              ?? raw.comment.firstOrNull?.trim().nullIfEmpty;
+          filePublisher = raw.organization.firstOrNull?.trim().nullIfEmpty;
+          final yr = raw.date.firstOrNull?.year;
+          if (yr != null && yr > 0) fileReleaseDate = yr.toString();
+        }
+      } catch (_) {}
+    }
+
+    // ── OPF — wins over file tags for all mapped fields ───────────────────
     OpfMetadata opf = const OpfMetadata();
     final opfFile = allFiles
         .where((f) => p.basename(f.path).toLowerCase() == 'metadata.opf')
@@ -141,105 +197,16 @@ class ScannerService {
       } catch (_) {}
     }
 
-    for (final filePath in audioFiles) {
-      try {
-        final needArt = coverPath == null && !foundCoverInMetadata;
-        final metadata = readMetadata(File(filePath), getImage: needArt);
+    final title = opf.title ?? fileTitle;
+    final author = opf.author ?? fileAuthor;
+    final narrator = opf.narrator ?? fileNarrator;
+    final subtitle = fileSubtitle;
+    final releaseDate = opf.releaseDate ?? fileReleaseDate;
+    final description = opf.description ?? fileDescription;
+    final publisher = opf.publisher ?? filePublisher;
+    final language = opf.language ?? fileLanguage;
 
-        final fileDur = metadata.duration ?? Duration.zero;
-        chapterDurations.add(fileDur);
-        totalDuration += fileDur;
-
-        rawTitles.add(metadata.title?.trim().isEmpty == true
-            ? null
-            : metadata.title?.trim());
-
-        if (title == name) {
-          final album = metadata.album;
-          if (album != null && album.isNotEmpty) title = album;
-        }
-
-        if (author == null && opf.author == null) {
-          final a = metadata.artist;
-          if (a != null && a.isNotEmpty) {
-            author = a;
-          } else if (metadata.performers.isNotEmpty) {
-            author = metadata.performers.first;
-          }
-        }
-
-        if (needArt && metadata.pictures.isNotEmpty) {
-          coverBytes = metadata.pictures.first.bytes;
-          foundCoverInMetadata = true;
-        }
-      } catch (e) {
-        chapterDurations.add(Duration.zero);
-        rawTitles.add(null);
-      }
-    }
-
-    if (cueSheet?.title != null && title == name) title = cueSheet!.title!;
-    if (cueSheet?.author != null && author == null) author = cueSheet!.author;
-    if (opf.title != null) title = opf.title!;
-    if (opf.author != null) author = opf.author;
-    if (opf.narrator != null) narrator = opf.narrator;
-
-    String? description = opf.description;
-    String? publisher = opf.publisher;
-    String? language = opf.language;
-    String? releaseDate = opf.releaseDate;
-    final String? series = opf.series;
-    final int? seriesIndex = opf.seriesIndex;
-
-    if (audioFiles.isNotEmpty) {
-      try {
-        final raw = readAllMetadata(File(audioFiles.first), getImage: false);
-        if (raw is Mp3Metadata) {
-          final lp = raw.leadPerformer?.trim();
-          if (lp != null && lp.isNotEmpty && lp != author && narrator == null) narrator = lp;
-          final commentText = raw.comments.firstOrNull?.text.trim();
-          if (commentText != null && commentText.isNotEmpty && description == null) {
-            description = commentText;
-          }
-          final pub = raw.publisher?.trim();
-          if (pub != null && pub.isNotEmpty && publisher == null) publisher = pub;
-          final lang = raw.languages?.trim();
-          if (lang != null && lang.isNotEmpty && language == null) language = lang;
-          if (raw.year != null && raw.year! > 0 && releaseDate == null) {
-            releaseDate = raw.year.toString();
-          }
-        } else if (raw is VorbisMetadata) {
-          final perf = raw.performer.firstOrNull?.trim();
-          if (perf != null && perf.isNotEmpty && narrator == null) narrator = perf;
-          final desc = raw.description.firstOrNull?.trim() ??
-              raw.comment.firstOrNull?.trim();
-          if (desc != null && desc.isNotEmpty && description == null) description = desc;
-          final org = raw.organization.firstOrNull?.trim();
-          if (org != null && org.isNotEmpty && publisher == null) publisher = org;
-          final yr = raw.date.firstOrNull?.year;
-          if (yr != null && yr > 0 && releaseDate == null) releaseDate = yr.toString();
-        } else if (raw is Mp4Metadata) {
-          final yr = raw.year?.year;
-          if (yr != null && yr > 0 && releaseDate == null) releaseDate = yr.toString();
-        }
-      } catch (_) {}
-    }
-
-    List<String> chapterNames = const [];
-    if (audioFiles.length > 1) {
-      final names = [
-        for (int i = 0; i < audioFiles.length; i++)
-          _detectChapterName(
-            rawTitles.length > i ? rawTitles[i] : null,
-            title,
-            audioFiles[i],
-          ),
-      ];
-      final anyImproved = names.indexed.any((e) =>
-          e.$2 != p.basenameWithoutExtension(audioFiles[e.$1]));
-      if (anyImproved) chapterNames = names;
-    }
-
+    // ── Chapters ──────────────────────────────────────────────────────────
     List<Chapter> chapters = const [];
     if (audioFiles.length == 1 &&
         p.extension(audioFiles.first).toLowerCase() == '.m4b') {
@@ -247,6 +214,11 @@ class ScannerService {
     } else if (cueSheet != null && cueSheet.chapters.isNotEmpty) {
       chapters = cueSheet.chapters;
     }
+
+    // Multi-file chapter names: use filename without extension — no heuristics
+    final chapterNames = audioFiles.length > 1
+        ? audioFiles.map((f) => p.basenameWithoutExtension(f)).toList()
+        : const <String>[];
 
     return Audiobook(
       title: title,
@@ -260,12 +232,18 @@ class ScannerService {
       chapters: chapters,
       chapterNames: chapterNames,
       narrator: narrator,
+      subtitle: subtitle,
       description: description,
       publisher: publisher,
       language: language,
       releaseDate: releaseDate,
-      series: series,
-      seriesIndex: seriesIndex,
+      series: opf.series,
+      seriesIndex: opf.seriesIndex,
+      fileTitleRaw: fileTitle,
+      fileAuthorRaw: fileAuthor,
+      fileNarratorRaw: fileNarrator,
+      fileReleaseDateRaw: fileReleaseDate,
+      fileSubtitleRaw: fileSubtitle,
     );
   }
 
@@ -553,19 +531,6 @@ class ScannerService {
     return segA.length.compareTo(segB.length);
   }
 
-  String _detectChapterName(String? title, String album, String filePath) {
-    if (title == null || title.isEmpty) return p.basenameWithoutExtension(filePath);
-    if (title.toLowerCase() == album.toLowerCase()) return p.basenameWithoutExtension(filePath);
-    for (final delimiter in [' - ', ' | ']) {
-      final idx = title.lastIndexOf(delimiter);
-      if (idx > 0) {
-        final after = title.substring(idx + delimiter.length).trim();
-        if (after.isNotEmpty) return after;
-      }
-    }
-    return title;
-  }
-
   _CueSheet? _parseCueSheet(String content, String folderPath) {
     String? globalTitle;
     String? globalPerformer;
@@ -642,4 +607,8 @@ class ScannerService {
 
   bool _isAudio(String path) => _audioExtensions.contains(p.extension(path).toLowerCase());
   bool _isImage(String path) => _imageExtensions.contains(p.extension(path).toLowerCase());
+}
+
+extension _StringExt on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
 }

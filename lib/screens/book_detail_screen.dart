@@ -8,8 +8,18 @@ import '../services/metadata_writer.dart';
 class BookDetailScreen extends StatefulWidget {
   final Audiobook book;
   final void Function(Audiobook updated) onApply;
+  final void Function() onRescan;
+  final void Function()? onUndo;
+  final void Function(bool isDirty) onDirtyChanged;
 
-  const BookDetailScreen({super.key, required this.book, required this.onApply});
+  const BookDetailScreen({
+    super.key,
+    required this.book,
+    required this.onApply,
+    required this.onRescan,
+    this.onUndo,
+    required this.onDirtyChanged,
+  });
 
   @override
   State<BookDetailScreen> createState() => _BookDetailScreenState();
@@ -17,18 +27,29 @@ class BookDetailScreen extends StatefulWidget {
 
 class _BookDetailScreenState extends State<BookDetailScreen> {
   late TextEditingController _titleCtrl;
+  late TextEditingController _subtitleCtrl;
   late TextEditingController _authorCtrl;
   late TextEditingController _narratorCtrl;
   late TextEditingController _releaseDateCtrl;
+  late TextEditingController _seriesCtrl;
+  late TextEditingController _seriesIndexCtrl;
+  late TextEditingController _descriptionCtrl;
   late List<TextEditingController> _chapterCtrls;
   late List<String> _originalChapterTitles;
   late String _originalTitle;
+  late String _originalSubtitle;
   late String _originalAuthor;
   late String _originalNarrator;
   late String _originalReleaseDate;
+  late String _originalSeries;
+  late String _originalSeriesIndex;
+  late String _originalDescription;
   String? _pendingCoverPath;
   bool _coverDropHover = false;
   bool _isDirty = false;
+  bool _showFileMetadata = false;
+  bool _applying = false;
+  bool _rescanning = false;
 
   List<_ChapterRow> get _chapters => _buildChapterList();
 
@@ -48,18 +69,30 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   void _initControllers() {
-    _originalTitle = widget.book.title;
+    _originalTitle = widget.book.title ?? '';
+    _originalSubtitle = widget.book.subtitle ?? '';
     _originalAuthor = widget.book.author ?? '';
     _originalNarrator = widget.book.narrator ?? '';
     _originalReleaseDate = widget.book.releaseDate ?? '';
+    _originalSeries = widget.book.series ?? '';
+    _originalSeriesIndex = widget.book.seriesIndex?.toString() ?? '';
+    _originalDescription = widget.book.description ?? '';
 
     _titleCtrl = TextEditingController(text: _originalTitle)
+      ..addListener(_onChanged);
+    _subtitleCtrl = TextEditingController(text: _originalSubtitle)
       ..addListener(_onChanged);
     _authorCtrl = TextEditingController(text: _originalAuthor)
       ..addListener(_onChanged);
     _narratorCtrl = TextEditingController(text: _originalNarrator)
       ..addListener(_onChanged);
     _releaseDateCtrl = TextEditingController(text: _originalReleaseDate)
+      ..addListener(_onChanged);
+    _seriesCtrl = TextEditingController(text: _originalSeries)
+      ..addListener(_onChanged);
+    _seriesIndexCtrl = TextEditingController(text: _originalSeriesIndex)
+      ..addListener(_onChanged);
+    _descriptionCtrl = TextEditingController(text: _originalDescription)
       ..addListener(_onChanged);
 
     final rows = _buildChapterList();
@@ -71,13 +104,18 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
     _isDirty = false;
     _pendingCoverPath = null;
     _coverDropHover = false;
+    _showFileMetadata = false;
   }
 
   void _disposeControllers() {
     _titleCtrl.dispose();
+    _subtitleCtrl.dispose();
     _authorCtrl.dispose();
     _narratorCtrl.dispose();
     _releaseDateCtrl.dispose();
+    _seriesCtrl.dispose();
+    _seriesIndexCtrl.dispose();
+    _descriptionCtrl.dispose();
     for (final c in _chapterCtrls) {
       c.dispose();
     }
@@ -92,81 +130,146 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   void _onChanged() {
     final dirty = _pendingCoverPath != null ||
         _titleCtrl.text != _originalTitle ||
+        _subtitleCtrl.text != _originalSubtitle ||
         _authorCtrl.text != _originalAuthor ||
         _narratorCtrl.text != _originalNarrator ||
         _releaseDateCtrl.text != _originalReleaseDate ||
+        _seriesCtrl.text != _originalSeries ||
+        _seriesIndexCtrl.text != _originalSeriesIndex ||
+        _descriptionCtrl.text != _originalDescription ||
         _chapterCtrls.indexed.any((e) =>
             e.$2.text !=
             (_originalChapterTitles.length > e.$1
                 ? _originalChapterTitles[e.$1]
                 : ''));
-    if (dirty != _isDirty) setState(() => _isDirty = dirty);
+    if (dirty != _isDirty) {
+      setState(() => _isDirty = dirty);
+      widget.onDirtyChanged(dirty);
+    }
   }
 
   Future<void> _apply() async {
-    var book = widget.book;
-    final newTitle = _titleCtrl.text.trim();
-    final newAuthor = _authorCtrl.text.trim();
-    final newNarrator = _narratorCtrl.text.trim();
-    final newReleaseDate = _releaseDateCtrl.text.trim();
+    setState(() => _applying = true);
+    final errors = <String>[];
+    try {
+      var book = widget.book;
+      final newTitle = _titleCtrl.text.trim();
+      final newSubtitle = _subtitleCtrl.text.trim();
+      final newAuthor = _authorCtrl.text.trim();
+      final newNarrator = _narratorCtrl.text.trim();
+      final newReleaseDate = _releaseDateCtrl.text.trim();
+      final newSeries = _seriesCtrl.text.trim();
+      final newSeriesIndex = int.tryParse(_seriesIndexCtrl.text.trim());
+      final newDescription = _descriptionCtrl.text.trim();
 
-    if (_pendingCoverPath != null) {
-      await MetadataWriter.applyCover(book, _pendingCoverPath!);
-      // Point the book at the newly written cover.jpg
-      book = book.copyWith(
-        coverImagePath: p.join(book.path, 'cover.jpg'),
-      );
-    }
+      if (_pendingCoverPath != null) {
+        final coverErrors = await MetadataWriter.applyCover(book, _pendingCoverPath!);
+        errors.addAll(coverErrors);
+        book = book.copyWith(coverImagePath: p.join(book.path, 'cover.jpg'));
+      }
 
-    // Write text metadata into audio files
-    await MetadataWriter.applyMetadata(book.copyWith(
-      title: newTitle,
-      author: newAuthor.isEmpty ? null : newAuthor,
-      narrator: newNarrator.isEmpty ? null : newNarrator,
-      releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
-    ));
-
-    Audiobook updated;
-    if (book.chapters.isNotEmpty) {
-      final newChapters = [
-        for (int i = 0; i < book.chapters.length; i++)
-          book.chapters[i].copyWith(
-            title: i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : null,
-          ),
-      ];
-      updated = book.copyWith(
+      final metaErrors = await MetadataWriter.applyMetadata(book.copyWith(
         title: newTitle,
+        subtitle: newSubtitle.isEmpty ? null : newSubtitle,
         author: newAuthor.isEmpty ? null : newAuthor,
         narrator: newNarrator.isEmpty ? null : newNarrator,
         releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
-        chapters: newChapters,
-        pendingCoverPath: _pendingCoverPath,
-      );
-    } else {
-      final newNames = [
-        for (int i = 0; i < book.audioFiles.length; i++)
-          i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : '',
-      ];
-      updated = book.copyWith(
-        title: newTitle,
-        author: newAuthor.isEmpty ? null : newAuthor,
-        narrator: newNarrator.isEmpty ? null : newNarrator,
-        releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
-        chapterNames: newNames,
-        pendingCoverPath: _pendingCoverPath,
-      );
+        description: newDescription.isEmpty ? null : newDescription,
+      ));
+      errors.addAll(metaErrors);
+
+      // Always export OPF to keep it in sync
+      try {
+        await MetadataWriter.exportOpf(book.copyWith(
+          title: newTitle,
+          subtitle: newSubtitle.isEmpty ? null : newSubtitle,
+          author: newAuthor.isEmpty ? null : newAuthor,
+          narrator: newNarrator.isEmpty ? null : newNarrator,
+          releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
+          series: newSeries.isEmpty ? null : newSeries,
+          seriesIndex: newSeriesIndex,
+          description: newDescription.isEmpty ? null : newDescription,
+        ));
+      } catch (e) {
+        errors.add('metadata.opf: $e');
+      }
+
+      Audiobook updated;
+      if (book.chapters.isNotEmpty) {
+        final newChapters = [
+          for (int i = 0; i < book.chapters.length; i++)
+            book.chapters[i].copyWith(
+              title: i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : null,
+            ),
+        ];
+        updated = book.copyWith(
+          title: newTitle,
+          subtitle: newSubtitle.isEmpty ? null : newSubtitle,
+          author: newAuthor.isEmpty ? null : newAuthor,
+          narrator: newNarrator.isEmpty ? null : newNarrator,
+          releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
+          series: newSeries.isEmpty ? null : newSeries,
+          seriesIndex: newSeriesIndex,
+          description: newDescription.isEmpty ? null : newDescription,
+          chapters: newChapters,
+          pendingCoverPath: _pendingCoverPath,
+          fileTitleRaw: newTitle,
+          fileAuthorRaw: newAuthor.isEmpty ? null : newAuthor,
+          fileNarratorRaw: newNarrator.isEmpty ? null : newNarrator,
+          fileReleaseDateRaw: newReleaseDate.isEmpty ? null : newReleaseDate,
+          fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
+        );
+      } else {
+        final newNames = [
+          for (int i = 0; i < book.audioFiles.length; i++)
+            i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : '',
+        ];
+        updated = book.copyWith(
+          title: newTitle,
+          subtitle: newSubtitle.isEmpty ? null : newSubtitle,
+          author: newAuthor.isEmpty ? null : newAuthor,
+          narrator: newNarrator.isEmpty ? null : newNarrator,
+          releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
+          series: newSeries.isEmpty ? null : newSeries,
+          seriesIndex: newSeriesIndex,
+          description: newDescription.isEmpty ? null : newDescription,
+          chapterNames: newNames,
+          pendingCoverPath: _pendingCoverPath,
+          fileTitleRaw: newTitle,
+          fileAuthorRaw: newAuthor.isEmpty ? null : newAuthor,
+          fileNarratorRaw: newNarrator.isEmpty ? null : newNarrator,
+          fileReleaseDateRaw: newReleaseDate.isEmpty ? null : newReleaseDate,
+          fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
+        );
+      }
+
+      widget.onApply(updated);
+      setState(() {
+        _isDirty = false;
+        _pendingCoverPath = null;
+        _originalTitle = newTitle;
+        _originalSubtitle = newSubtitle;
+        _originalAuthor = newAuthor;
+        _originalNarrator = newNarrator;
+        _originalReleaseDate = newReleaseDate;
+        _originalSeries = newSeries;
+        _originalSeriesIndex = newSeriesIndex?.toString() ?? '';
+        _originalDescription = newDescription;
+        _originalChapterTitles = _chapterCtrls.map((c) => c.text).toList();
+      });
+    } catch (e) {
+      errors.add(e.toString());
+    } finally {
+      setState(() => _applying = false);
     }
 
-    widget.onApply(updated);
-    setState(() {
-      _isDirty = false;
-      _pendingCoverPath = null;
-      _originalTitle = _titleCtrl.text;
-      _originalAuthor = _authorCtrl.text;
-      _originalNarrator = _narratorCtrl.text;
-      _originalReleaseDate = _releaseDateCtrl.text;
-      _originalChapterTitles = _chapterCtrls.map((c) => c.text).toList();
-    });
+    if (errors.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: Colors.red[900],
+        content: Text('Errors during apply:\n${errors.join('\n')}'),
+        duration: const Duration(seconds: 6),
+      ));
+    }
   }
 
   @override
@@ -193,23 +296,129 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
               Text('Chapters (${chapters.length})',
                   style: theme.textTheme.titleMedium),
               const Spacer(),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  await MetadataWriter.exportMetadata(widget.book);
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                      content: Text(
-                          'Exported metadata.opf + cover.jpg to ${widget.book.path}'),
-                    ));
-                  }
+              ToggleButtons(
+                isSelected: [!_showFileMetadata, _showFileMetadata],
+                onPressed: (i) {
+                  final showFile = i == 1;
+                  // Remove listeners while updating to avoid false dirty
+                  _titleCtrl.removeListener(_onChanged);
+                  _subtitleCtrl.removeListener(_onChanged);
+                  _authorCtrl.removeListener(_onChanged);
+                  _narratorCtrl.removeListener(_onChanged);
+                  _releaseDateCtrl.removeListener(_onChanged);
+                  final b = widget.book;
+                  _titleCtrl.text = showFile ? (b.fileTitleRaw ?? b.title ?? '') : (b.title ?? '');
+                  _subtitleCtrl.text = showFile ? (b.fileSubtitleRaw ?? b.subtitle ?? '') : (b.subtitle ?? '');
+                  _authorCtrl.text = showFile ? (b.fileAuthorRaw ?? b.author ?? '') : (b.author ?? '');
+                  _narratorCtrl.text = showFile ? (b.fileNarratorRaw ?? b.narrator ?? '') : (b.narrator ?? '');
+                  _releaseDateCtrl.text = showFile ? (b.fileReleaseDateRaw ?? b.releaseDate ?? '') : (b.releaseDate ?? '');
+                  _titleCtrl.addListener(_onChanged);
+                  _subtitleCtrl.addListener(_onChanged);
+                  _authorCtrl.addListener(_onChanged);
+                  _narratorCtrl.addListener(_onChanged);
+                  _releaseDateCtrl.addListener(_onChanged);
+                  setState(() => _showFileMetadata = showFile);
                 },
-                icon: const Icon(Icons.upload_file, size: 18),
-                label: const Text('Export metadata'),
+                borderRadius: BorderRadius.circular(6),
+                constraints: const BoxConstraints(minWidth: 64, minHeight: 32),
+                children: const [
+                  Text('OPF / merged', style: TextStyle(fontSize: 12)),
+                  Text('File tags', style: TextStyle(fontSize: 12)),
+                ],
               ),
               const SizedBox(width: 8),
+              PopupMenuButton<String>(
+                tooltip: 'Export',
+                child: OutlinedButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.upload_file, size: 18),
+                  label: const Text('Export'),
+                ),
+                onSelected: (value) async {
+                  try {
+                    if (value == 'opf') {
+                      await MetadataWriter.exportOpf(widget.book);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('Exported metadata.opf to ${widget.book.path}'),
+                        ));
+                      }
+                    } else {
+                      await MetadataWriter.exportCover(widget.book);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                          content: Text('Exported cover.jpg to ${widget.book.path}'),
+                        ));
+                      }
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        backgroundColor: Colors.red[900],
+                        content: Text('Export failed: $e'),
+                      ));
+                    }
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'opf', child: Text('Export OPF')),
+                  PopupMenuItem(
+                    value: 'cover',
+                    enabled: widget.book.coverImagePath != null ||
+                        widget.book.coverImageBytes != null,
+                    child: const Text('Export cover.jpg'),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Undo last apply',
+                onPressed: widget.onUndo,
+                icon: const Icon(Icons.undo),
+              ),
+              IconButton(
+                tooltip: 'Rescan from disk',
+                onPressed: (_applying || _rescanning) ? null : () async {
+                  if (_isDirty) {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Discard changes?'),
+                        content: const Text(
+                            'Rescanning will discard your unsaved changes.'),
+                        actions: [
+                          TextButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              child: const Text('Cancel')),
+                          FilledButton(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              child: const Text('Discard & Rescan')),
+                        ],
+                      ),
+                    );
+                    if (confirm != true) return;
+                  }
+                  setState(() => _rescanning = true);
+                  try {
+                    widget.onRescan();
+                  } finally {
+                    if (mounted) setState(() => _rescanning = false);
+                  }
+                },
+                icon: _rescanning
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.refresh),
+              ),
               FilledButton.icon(
-                onPressed: _isDirty ? _apply : null,
-                icon: const Icon(Icons.check, size: 18),
+                onPressed: (_isDirty && !_applying) ? _apply : null,
+                icon: _applying
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.check, size: 18),
                 label: const Text('Apply'),
               ),
               if (_isDirty)
@@ -304,19 +513,18 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   Widget _buildMetadata(ThemeData theme) {
-    final series = widget.book.series != null
-        ? '${widget.book.series}${widget.book.seriesIndex != null ? ' #${widget.book.seriesIndex}' : ''}'
-        : null;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _editableRow('Title', _titleCtrl, style: theme.textTheme.titleLarge),
         const SizedBox(height: 4),
+        _editableRow('Subtitle', _subtitleCtrl),
         _editableRow('Author', _authorCtrl),
         _editableRow('Narrator', _narratorCtrl),
         _editableRow('Published', _releaseDateCtrl),
-        _metaRow('Series', series),
+        _editableRow('Series', _seriesCtrl),
+        _editableRow('Series #', _seriesIndexCtrl),
+        _editableRow('Description', _descriptionCtrl, maxLines: 4),
         _metaRow('Duration', _formatDuration(widget.book.duration)),
         _metaRow('Publisher', widget.book.publisher),
         _metaRow('Language', widget.book.language),
@@ -326,20 +534,24 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
   }
 
   Widget _editableRow(String label, TextEditingController ctrl,
-      {TextStyle? style}) {
+      {TextStyle? style, int maxLines = 1}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 80,
-            child: Text('$label:', style: const TextStyle(color: Colors.grey)),
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SizedBox(
+              width: 80,
+              child: Text('$label:', style: const TextStyle(color: Colors.grey)),
+            ),
           ),
           Expanded(
             child: TextField(
               controller: ctrl,
               style: style,
+              maxLines: maxLines,
               decoration: const InputDecoration(
                 isDense: true,
                 contentPadding:

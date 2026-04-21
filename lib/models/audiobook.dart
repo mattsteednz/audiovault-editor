@@ -11,7 +11,7 @@ class Chapter {
 }
 
 class Audiobook {
-  final String title;
+  final String? title;
   final String? author;
   final Duration? duration;
   final String path;
@@ -22,17 +22,24 @@ class Audiobook {
   final List<Chapter> chapters;
   final List<String> chapterNames;
   final String? narrator;
+  final String? subtitle;
   final String? description;
   final String? publisher;
   final String? language;
   final String? releaseDate;
   final String? series;
   final int? seriesIndex;
-  /// Path to a newly dropped cover image, not yet written to disk.
   final String? pendingCoverPath;
 
+  /// Raw values read directly from audio file tags, before OPF override.
+  final String? fileTitleRaw;
+  final String? fileAuthorRaw;
+  final String? fileNarratorRaw;
+  final String? fileReleaseDateRaw;
+  final String? fileSubtitleRaw;
+
   const Audiobook({
-    required this.title,
+    this.title,
     this.author,
     this.duration,
     required this.path,
@@ -43,6 +50,7 @@ class Audiobook {
     this.chapters = const [],
     this.chapterNames = const [],
     this.narrator,
+    this.subtitle,
     this.description,
     this.publisher,
     this.language,
@@ -50,17 +58,31 @@ class Audiobook {
     this.series,
     this.seriesIndex,
     this.pendingCoverPath,
+    this.fileTitleRaw,
+    this.fileAuthorRaw,
+    this.fileNarratorRaw,
+    this.fileReleaseDateRaw,
+    this.fileSubtitleRaw,
   });
 
   Audiobook copyWith({
     String? title,
     String? author,
     String? narrator,
+    String? subtitle,
     String? releaseDate,
     String? coverImagePath,
+    String? series,
+    int? seriesIndex,
+    String? description,
     List<Chapter>? chapters,
     List<String>? chapterNames,
     String? pendingCoverPath,
+    String? fileTitleRaw,
+    String? fileAuthorRaw,
+    String? fileNarratorRaw,
+    String? fileReleaseDateRaw,
+    String? fileSubtitleRaw,
   }) =>
       Audiobook(
         title: title ?? this.title,
@@ -74,12 +96,18 @@ class Audiobook {
         chapters: chapters ?? this.chapters,
         chapterNames: chapterNames ?? this.chapterNames,
         narrator: narrator ?? this.narrator,
-        description: description,
+        subtitle: subtitle ?? this.subtitle,
+        description: description ?? this.description,
         publisher: publisher,
         language: language,
         releaseDate: releaseDate ?? this.releaseDate,
-        series: series,
-        seriesIndex: seriesIndex,
+        series: series ?? this.series,
+        seriesIndex: seriesIndex ?? this.seriesIndex,
         pendingCoverPath: pendingCoverPath ?? this.pendingCoverPath,
+        fileTitleRaw: fileTitleRaw ?? this.fileTitleRaw,
+        fileAuthorRaw: fileAuthorRaw ?? this.fileAuthorRaw,
+        fileNarratorRaw: fileNarratorRaw ?? this.fileNarratorRaw,
+        fileReleaseDateRaw: fileReleaseDateRaw ?? this.fileReleaseDateRaw,
+        fileSubtitleRaw: fileSubtitleRaw ?? this.fileSubtitleRaw,
       );
 }
