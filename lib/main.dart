@@ -245,15 +245,18 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context, index) {
         final book = books[index];
         final isSelected = _ctrl.selected?.path == book.path;
-        return CheckboxListTile(
-          value: _ctrl.batchPaths.contains(book.path),
-          onChanged: (checked) {
-            _ctrl.toggleBatch(book, selected: checked == true);
-            if (checked != true) _ctrl.selectBook(book);
-          },
+        final isChecked = _ctrl.batchPaths.contains(book.path);
+        return ListTile(
           selected: isSelected,
           selectedTileColor: Colors.white10,
-          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          onTap: () => _ctrl.selectBook(book),
+          leading: Checkbox(
+            value: isChecked,
+            onChanged: (checked) {
+              _ctrl.toggleBatch(book, selected: checked == true);
+            },
+          ),
           title: Row(
             children: [
               if (_ctrl.dirtyPaths.contains(book.path))
@@ -289,7 +292,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          dense: true,
         );
       },
     );
