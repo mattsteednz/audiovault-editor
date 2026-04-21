@@ -3,11 +3,21 @@
 ## [1.2.0] - TBD
 
 ### Added
+- UX/UI improvements — cohesive design system based on "Progressive Disclosure with Clear Hierarchy" principle (PRD-29)
+  - **Action bar reorganization** — Export and Rename moved to More menu (⋮); primary actions (Apply, Undo, Rescan) right-aligned; contextual actions (Copy from, More) left-aligned
+  - **View toggle relocation** — "Merged metadata" / "File tags only" toggle moved above form fields with clearer labels (was "OPF / merged" / "File tags" in action bar)
+  - **Resizable sidebar** — drag the right edge of the sidebar to adjust width (250-500px); width persists across sessions
+  - **Always-visible filter chips** — "Dupes" and "No cover" chips always shown (grayed when count is 0) to prevent layout shift
+  - **Search clear button** — X icon appears in search field when text is present; clears search and refocuses field
+  - **Batch selection banner** — when 2+ books selected, a banner appears above the detail panel showing "✓ N books selected" with "Clear selection" and "Edit all →" buttons
+  - **Cover thumbnails** — 32x32 cover images displayed to the left of book titles in the sidebar for visual scanning
+  - **Sort button with visible state** — sort control now displays current order ("Sort: Title A-Z ▼") instead of icon-only button
+  - **Trailing checkboxes** — checkboxes moved to the right side of book list items (matches Gmail pattern); cover thumbnails on the left
 - FLAC and OGG metadata write — Apply now writes title, author, narrator, publisher, language, genre, and description to FLAC and OGG Vorbis comment tags (PRD-27)
 - Scan progress indicator — live book count and determinate progress bar during library scan (PRD-25)
-- Preferences persistence — last-opened folder, sort order, and window size/position are automatically restored on launch (PRD-24)
+- Preferences persistence — last-opened folder, sort order, sidebar width, and window size/position are automatically restored on launch (PRD-24)
 - Copy metadata from another book — "Copy from…" button in detail panel opens a searchable dialog to copy author, narrator, series, genre, publisher, or language from any other book in the library (PRD-18)
-- Rename folder — "Rename folder" action in detail panel proposes a new folder name based on current metadata; renames the folder on disk and updates all internal paths (PRD-16)
+- Rename folder — "Rename folder" action in More menu proposes a new folder name based on current metadata; renames the folder on disk and updates all internal paths (PRD-16)
 
 ### Fixed
 - Subtitle / description OPF conflict — subtitle now uses `<meta name="subtitle">` instead of `dc:description opf:file-as="subtitle"`; OPF parser reads subtitle from `<meta name="subtitle">` and excludes it from passthrough; subtitle survives round-trip (PRD-22)

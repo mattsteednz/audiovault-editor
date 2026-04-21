@@ -497,6 +497,47 @@ class _BookDetailScreenState extends State<BookDetailScreen>
             ],
           ),
           const SizedBox(height: 12),
+          // ── View toggle ──
+          ToggleButtons(
+            isSelected: [!_showFileMetadata, _showFileMetadata],
+            onPressed: (i) {
+              final showFile = i == 1;
+              _titleCtrl.removeListener(_onChanged);
+              _subtitleCtrl.removeListener(_onChanged);
+              _authorCtrl.removeListener(_onChanged);
+              _narratorCtrl.removeListener(_onChanged);
+              _releaseDateCtrl.removeListener(_onChanged);
+              final b = widget.book;
+              _titleCtrl.text = showFile
+                  ? (b.fileTitleRaw ?? b.title ?? '')
+                  : (b.title ?? '');
+              _subtitleCtrl.text = showFile
+                  ? (b.fileSubtitleRaw ?? b.subtitle ?? '')
+                  : (b.subtitle ?? '');
+              _authorCtrl.text = showFile
+                  ? (b.fileAuthorRaw ?? b.author ?? '')
+                  : (b.author ?? '');
+              _narratorCtrl.text = showFile
+                  ? (b.fileNarratorRaw ?? b.narrator ?? '')
+                  : (b.narrator ?? '');
+              _releaseDateCtrl.text = showFile
+                  ? (b.fileReleaseDateRaw ?? b.releaseDate ?? '')
+                  : (b.releaseDate ?? '');
+              _titleCtrl.addListener(_onChanged);
+              _subtitleCtrl.addListener(_onChanged);
+              _authorCtrl.addListener(_onChanged);
+              _narratorCtrl.addListener(_onChanged);
+              _releaseDateCtrl.addListener(_onChanged);
+              setState(() => _showFileMetadata = showFile);
+            },
+            borderRadius: BorderRadius.circular(6),
+            constraints: const BoxConstraints(minWidth: 80, minHeight: 32),
+            children: const [
+              Text('Merged metadata', style: TextStyle(fontSize: 12)),
+              Text('File tags only', style: TextStyle(fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 12),
           // ── Action bar ──
           _buildActionBar(theme),
           const SizedBox(height: 8),
@@ -605,46 +646,6 @@ class _BookDetailScreenState extends State<BookDetailScreen>
 
     return Row(
       children: [
-        ToggleButtons(
-          isSelected: [!_showFileMetadata, _showFileMetadata],
-          onPressed: (i) {
-            final showFile = i == 1;
-            _titleCtrl.removeListener(_onChanged);
-            _subtitleCtrl.removeListener(_onChanged);
-            _authorCtrl.removeListener(_onChanged);
-            _narratorCtrl.removeListener(_onChanged);
-            _releaseDateCtrl.removeListener(_onChanged);
-            final b = widget.book;
-            _titleCtrl.text = showFile
-                ? (b.fileTitleRaw ?? b.title ?? '')
-                : (b.title ?? '');
-            _subtitleCtrl.text = showFile
-                ? (b.fileSubtitleRaw ?? b.subtitle ?? '')
-                : (b.subtitle ?? '');
-            _authorCtrl.text = showFile
-                ? (b.fileAuthorRaw ?? b.author ?? '')
-                : (b.author ?? '');
-            _narratorCtrl.text = showFile
-                ? (b.fileNarratorRaw ?? b.narrator ?? '')
-                : (b.narrator ?? '');
-            _releaseDateCtrl.text = showFile
-                ? (b.fileReleaseDateRaw ?? b.releaseDate ?? '')
-                : (b.releaseDate ?? '');
-            _titleCtrl.addListener(_onChanged);
-            _subtitleCtrl.addListener(_onChanged);
-            _authorCtrl.addListener(_onChanged);
-            _narratorCtrl.addListener(_onChanged);
-            _releaseDateCtrl.addListener(_onChanged);
-            setState(() => _showFileMetadata = showFile);
-          },
-          borderRadius: BorderRadius.circular(6),
-          constraints: const BoxConstraints(minWidth: 64, minHeight: 32),
-          children: const [
-            Text('OPF / merged', style: TextStyle(fontSize: 12)),
-            Text('File tags', style: TextStyle(fontSize: 12)),
-          ],
-        ),
-        const Spacer(),
         OutlinedButton.icon(
           onPressed: otherBooks.isEmpty ? null : _copyFrom,
           icon: const Icon(Icons.content_copy, size: 18),
@@ -657,9 +658,61 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           onSelected: (value) async {
             if (value == 'rename') {
               await _renameFolder();
+            } else if (value == 'export_opf') {
+              try {
+                await MetadataWriter.exportOpf(widget.book);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content:
+                      Text('Exported metadata.opf to ${widget.book.path}'),
+                ));
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  backgroundColor: Colors.red[900],
+                  content: Text('Export failed: $e'),
+                ));
+              }
+            } else if (value == 'export_cover') {
+              try {
+                await MetadataWriter.exportCover(widget.book);
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content:
+                      Text('Exported cover.jpg to ${widget.book.path}'),
+                ));
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  backgroundColor: Colors.red[900],
+                  content: Text('Export failed: $e'),
+                ));
+              }
             }
           },
           itemBuilder: (_) => [
+            const PopupMenuItem(
+              value: 'export_opf',
+              child: Row(
+                children: [
+                  Icon(Icons.upload_file, size: 18),
+                  SizedBox(width: 8),
+                  Text('Export OPF'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'export_cover',
+              enabled: widget.book.coverImagePath != null ||
+                  widget.book.coverImageBytes != null,
+              child: const Row(
+                children: [
+                  Icon(Icons.image, size: 18),
+                  SizedBox(width: 8),
+                  Text('Export Cover'),
+                ],
+              ),
+            ),
             PopupMenuItem(
               value: 'rename',
               enabled: !_applying && !_rescanning,
@@ -673,53 +726,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
             ),
           ],
         ),
-        const SizedBox(width: 8),
-        PopupMenuButton<String>(
-          tooltip: 'Export',
-          child: OutlinedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.upload_file, size: 18),
-            label: const Text('Export'),
-          ),
-          onSelected: (value) async {
-            try {
-              if (value == 'opf') {
-                await MetadataWriter.exportOpf(widget.book);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content:
-                        Text('Exported metadata.opf to ${widget.book.path}'),
-                  ));
-                }
-              } else {
-                await MetadataWriter.exportCover(widget.book);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content:
-                        Text('Exported cover.jpg to ${widget.book.path}'),
-                  ));
-                }
-              }
-            } catch (e) {
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  backgroundColor: Colors.red[900],
-                  content: Text('Export failed: $e'),
-                ));
-              }
-            }
-          },
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'opf', child: Text('Export OPF')),
-            PopupMenuItem(
-              value: 'cover',
-              enabled: widget.book.coverImagePath != null ||
-                  widget.book.coverImageBytes != null,
-              child: const Text('Export cover.jpg'),
-            ),
-          ],
-        ),
-        const SizedBox(width: 8),
+        const Spacer(),
         IconButton(
           tooltip: 'Undo last apply',
           onPressed: widget.onUndo,
