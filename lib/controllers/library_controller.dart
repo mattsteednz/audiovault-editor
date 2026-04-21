@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
 import 'package:audiovault_editor/services/scanner_service.dart';
+import 'package:audiovault_editor/services/preferences_service.dart';
 
 enum SortOrder { titleAsc, titleDesc, authorAsc, authorDesc, seriesAsc, narratorAsc, durationAsc, durationDesc }
 
@@ -98,6 +99,7 @@ class LibraryController extends ChangeNotifier {
 
   void setSortOrder(SortOrder order) {
     _sortOrder = order;
+    PreferencesService.saveSortOrder(order);
     notifyListeners();
   }
 
@@ -188,6 +190,7 @@ class LibraryController extends ChangeNotifier {
     _batchPaths.clear();
     _searchQuery = '';
     _recomputeFlags();
+    PreferencesService.saveFolder(folderPath);
     notifyListeners();
   }
 
