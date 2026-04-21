@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
+import 'package:audiovault_editor/widgets/copy_from_dialog.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final Audiobook book;
+  final List<Audiobook> allBooks;
   final void Function(Audiobook updated) onApply;
   final void Function() onRescan;
   final void Function()? onUndo;
@@ -16,6 +18,7 @@ class BookDetailScreen extends StatefulWidget {
   const BookDetailScreen({
     super.key,
     required this.book,
+    required this.allBooks,
     required this.onApply,
     required this.onRescan,
     this.onUndo,
@@ -316,6 +319,63 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     }
   }
 
+  Future<void> _copyFrom() async {
+    final otherBooks = widget.allBooks
+        .where((b) => b.path != widget.book.path)
+        .toList();
+    if (otherBooks.isEmpty) return;
+
+    final result = await showDialog<(Audiobook, Set<String>)>(
+      context: context,
+      builder: (ctx) => CopyFromDialog(books: otherBooks),
+    );
+
+    if (result == null) return;
+    final (sourceBook, fields) = result;
+
+    // Remove listeners temporarily to avoid triggering dirty state during bulk updates
+    _authorCtrl.removeListener(_onChanged);
+    _narratorCtrl.removeListener(_onChanged);
+    _seriesCtrl.removeListener(_onChanged);
+    _seriesIndexCtrl.removeListener(_onChanged);
+    _genreCtrl.removeListener(_onChanged);
+    _publisherCtrl.removeListener(_onChanged);
+    _languageCtrl.removeListener(_onChanged);
+
+    if (fields.contains('author')) {
+      _authorCtrl.text = sourceBook.author ?? '';
+    }
+    if (fields.contains('narrator')) {
+      _narratorCtrl.text = sourceBook.narrator ?? '';
+    }
+    if (fields.contains('series')) {
+      _seriesCtrl.text = sourceBook.series ?? '';
+    }
+    if (fields.contains('seriesIndex')) {
+      _seriesIndexCtrl.text = sourceBook.seriesIndex?.toString() ?? '';
+    }
+    if (fields.contains('genre')) {
+      _genreCtrl.text = sourceBook.genre ?? '';
+    }
+    if (fields.contains('publisher')) {
+      _publisherCtrl.text = sourceBook.publisher ?? '';
+    }
+    if (fields.contains('language')) {
+      _languageCtrl.text = sourceBook.language ?? '';
+    }
+
+    // Re-add listeners and trigger change detection
+    _authorCtrl.addListener(_onChanged);
+    _narratorCtrl.addListener(_onChanged);
+    _seriesCtrl.addListener(_onChanged);
+    _seriesIndexCtrl.addListener(_onChanged);
+    _genreCtrl.addListener(_onChanged);
+    _publisherCtrl.addListener(_onChanged);
+    _languageCtrl.addListener(_onChanged);
+
+    _onChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -437,6 +497,10 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   }
 
   Widget _buildActionBar(ThemeData theme) {
+    final otherBooks = widget.allBooks
+        .where((b) => b.path != widget.book.path)
+        .toList();
+
     return Row(
       children: [
         ToggleButtons(
@@ -479,6 +543,12 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           ],
         ),
         const Spacer(),
+        OutlinedButton.icon(
+          onPressed: otherBooks.isEmpty ? null : _copyFrom,
+          icon: const Icon(Icons.content_copy, size: 18),
+          label: const Text('Copy from…'),
+        ),
+        const SizedBox(width: 8),
         PopupMenuButton<String>(
           tooltip: 'Export',
           child: OutlinedButton.icon(

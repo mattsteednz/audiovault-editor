@@ -156,6 +156,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                             ? BookDetailScreen(
                                 key: ValueKey(_ctrl.selected!.path),
                                 book: _ctrl.selected!,
+                                allBooks: _ctrl.books,
                                 onApply: _ctrl.onBookApplied,
                                 onRescan: _ctrl.rescanSelected,
                                 onUndo: _ctrl.undoSnapshot?.path ==
