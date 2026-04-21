@@ -182,10 +182,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
-              style: const TextStyle(fontSize: 11, color: Colors.grey),
-            ),
+            if (_ctrl.scanning)
+              Text(
+                'Scanning… ${_ctrl.scanFound} book(s) found',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              )
+            else
+              Text(
+                '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
             if (_ctrl.duplicateCount > 0 || _ctrl.missingCoverCount > 0) ...[
               const SizedBox(height: 6),
               Wrap(
@@ -214,9 +220,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
           if (_ctrl.scanning)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: LinearProgressIndicator(
+                value: _ctrl.scanTotal > 0
+                    ? _ctrl.scanFound / _ctrl.scanTotal
+                    : null,
+              ),
             ),
         ],
       ),

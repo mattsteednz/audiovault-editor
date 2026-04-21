@@ -31,7 +31,8 @@ class ScannerService {
       _scanSubfolder(Directory(folderPath));
 
   Future<List<Audiobook>> scanFolder(String folderPath,
-      {void Function(Audiobook)? onBookFound}) async {
+      {void Function(Audiobook)? onBookFound,
+      void Function(int found, int total)? onProgress}) async {
     final dir = Directory(folderPath);
     if (!await dir.exists()) return [];
 
@@ -41,13 +42,15 @@ class ScannerService {
         .where((d) => !p.basename(d.path).startsWith('.'))
         .toList();
 
+    final total = subdirs.length;
     final books = <Audiobook>[];
-    for (final subdir in subdirs) {
-      final results = await _scanAsBookOrAuthorFolder(subdir);
+    for (int i = 0; i < subdirs.length; i++) {
+      final results = await _scanAsBookOrAuthorFolder(subdirs[i]);
       for (final book in results) {
         onBookFound?.call(book);
       }
       books.addAll(results);
+      onProgress?.call(books.length, total);
     }
 
     final rootBook = await _scanSubfolder(dir);

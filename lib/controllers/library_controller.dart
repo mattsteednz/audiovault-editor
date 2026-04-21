@@ -18,6 +18,8 @@ class LibraryController extends ChangeNotifier {
   bool _showDuplicatesOnly = false;
   bool _showMissingCoverOnly = false;
   bool _scanning = false;
+  int _scanFound = 0;
+  int _scanTotal = 0;
   String? _folderPath;
   String _searchQuery = '';
   SortOrder _sortOrder = SortOrder.titleAsc;
@@ -36,6 +38,8 @@ class LibraryController extends ChangeNotifier {
   int get missingCoverCount => _missingCoverPaths.length;
   int get duplicateCount => _duplicatePaths.length;
   bool get scanning => _scanning;
+  int get scanFound => _scanFound;
+  int get scanTotal => _scanTotal;
   String? get folderPath => _folderPath;
   String get searchQuery => _searchQuery;
   SortOrder get sortOrder => _sortOrder;
@@ -159,15 +163,27 @@ class LibraryController extends ChangeNotifier {
     _books = [];
     _selected = null;
     _folderPath = folderPath;
+    _scanFound = 0;
+    _scanTotal = 0;
     notifyListeners();
 
-    final books = await _scanner.scanFolder(folderPath, onBookFound: (book) {
-      _books = [..._books, book];
-      notifyListeners();
-    });
+    final books = await _scanner.scanFolder(
+      folderPath,
+      onBookFound: (book) {
+        _books = [..._books, book];
+        notifyListeners();
+      },
+      onProgress: (found, total) {
+        _scanFound = found;
+        _scanTotal = total;
+        notifyListeners();
+      },
+    );
 
     _books = books;
     _scanning = false;
+    _scanFound = 0;
+    _scanTotal = 0;
     _dirtyPaths.clear();
     _batchPaths.clear();
     _searchQuery = '';
