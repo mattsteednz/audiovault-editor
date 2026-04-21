@@ -3,6 +3,18 @@
 ## [1.2.0] - TBD
 
 ### Added
+- **Editable chapter table** — Chapters tab is now fully interactive for single-file M4B and MP3 books
+  - Add chapters with the "Add chapter" button; insert between existing chapters via a hover-reveal `(+)` divider
+  - Delete chapters with a hover-reveal delete button (minimum one chapter enforced)
+  - Edit chapter titles inline; edit start times for single-file books (first chapter locked at 00:00:00)
+  - Start time fields accept `MM:SS`, `HH:MM:SS`, or `MMM:SS` (minutes > 99) and auto-reformat to `HH:MM:SS` on blur
+  - Duration is always derived automatically (never directly editable)
+  - Timestamp conflicts block Apply with an inline banner; no auto-reordering
+  - Local undo/redo stack (Ctrl+Z / Ctrl+Y) for chapter edits, separate from the global undo
+  - **Quick Edit modal** — paste all chapter titles and timestamps at once in `Title, HH:MM:SS` format; rightmost comma is the separator so titles with commas work; error lines highlighted in the side gutter; Save validates before committing
+  - **Export CUE** — single-file MP3 books can export a `.cue` sheet via the More (⋮) menu; uses `MM:SS:FF` at 75 fps
+  - **M4B chapter write** — Apply writes an iTunes/QuickTime chapter track (text track + `chap` tref reference) back to the M4B file; a rescan will show the updated chapters
+  - Multi-file books show title-only editing with the Start column hidden; duration comes from each file's metadata
 - UX/UI improvements — cohesive design system based on "Progressive Disclosure with Clear Hierarchy" principle (PRD-29)
   - **Action bar reorganization** — Export and Rename moved to More menu (⋮); primary actions (Apply, Undo, Rescan) right-aligned; contextual actions (Copy from, More) left-aligned
   - **View toggle relocation** — "Merged metadata" / "File tags only" toggle moved above form fields with clearer labels (was "OPF / merged" / "File tags" in action bar)

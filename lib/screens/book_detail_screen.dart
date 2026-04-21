@@ -4,7 +4,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/cue_writer.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
+import 'package:audiovault_editor/widgets/chapter_editor.dart';
 import 'package:audiovault_editor/widgets/copy_from_dialog.dart';
 
 class BookDetailScreen extends StatefulWidget {
@@ -45,8 +47,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   late TextEditingController _publisherCtrl;
   late TextEditingController _languageCtrl;
   late TextEditingController _genreCtrl;
-  late List<TextEditingController> _chapterCtrls;
-  late List<String> _originalChapterTitles;
+  List<ChapterEntry>? _pendingChapters;
   late String _originalTitle;
   late String _originalSubtitle;
   late String _originalAuthor;
@@ -61,11 +62,16 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   String? _pendingCoverPath;
   bool _coverDropHover = false;
   bool _isDirty = false;
+  bool _chapterHasErrors = false;
   bool _showFileMetadata = false;
   bool _applying = false;
   bool _rescanning = false;
 
-  List<_ChapterRow> get _chapters => _buildChapterList();
+  int get _chapterCount {
+    if (_pendingChapters != null) return _pendingChapters!.length;
+    if (widget.book.chapters.isNotEmpty) return widget.book.chapters.length;
+    return widget.book.audioFiles.length;
+  }
 
   @override
   void initState() {
@@ -119,13 +125,9 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     _genreCtrl = TextEditingController(text: _originalGenre)
       ..addListener(_onChanged);
 
-    final rows = _buildChapterList();
-    _originalChapterTitles = rows.map((r) => r.title).toList();
-    _chapterCtrls = [
-      for (final title in _originalChapterTitles)
-        TextEditingController(text: title)..addListener(_onChanged),
-    ];
+    _pendingChapters = null;
     _isDirty = false;
+    _chapterHasErrors = false;
     _pendingCoverPath = null;
     _coverDropHover = false;
     _showFileMetadata = false;
@@ -143,9 +145,6 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     _publisherCtrl.dispose();
     _languageCtrl.dispose();
     _genreCtrl.dispose();
-    for (final c in _chapterCtrls) {
-      c.dispose();
-    }
   }
 
   @override
@@ -157,6 +156,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
 
   void _onChanged() {
     final dirty = _pendingCoverPath != null ||
+        _pendingChapters != null ||
         _titleCtrl.text != _originalTitle ||
         _subtitleCtrl.text != _originalSubtitle ||
         _authorCtrl.text != _originalAuthor ||
@@ -167,12 +167,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
         _descriptionCtrl.text != _originalDescription ||
         _publisherCtrl.text != _originalPublisher ||
         _languageCtrl.text != _originalLanguage ||
-        _genreCtrl.text != _originalGenre ||
-        _chapterCtrls.indexed.any((e) =>
-            e.$2.text !=
-            (_originalChapterTitles.length > e.$1
-                ? _originalChapterTitles[e.$1]
-                : ''));
+        _genreCtrl.text != _originalGenre;
     if (dirty != _isDirty) {
       setState(() => _isDirty = dirty);
       widget.onDirtyChanged(dirty);
@@ -215,6 +210,18 @@ class _BookDetailScreenState extends State<BookDetailScreen>
       ));
       errors.addAll(metaErrors);
 
+      // Write chapters for single-file M4B books
+      if (_pendingChapters != null && widget.book.audioFiles.length == 1) {
+        final chapterList = _pendingChapters!
+            .map((e) => Chapter(title: e.title, start: e.start))
+            .toList();
+        final chapterErrors = await MetadataWriter.applyChapters(
+          book,
+          chapterList,
+        );
+        errors.addAll(chapterErrors);
+      }
+
       // Always export OPF to keep it in sync
       try {
         await MetadataWriter.exportOpf(book.copyWith(
@@ -236,12 +243,9 @@ class _BookDetailScreenState extends State<BookDetailScreen>
 
       Audiobook updated;
       if (book.chapters.isNotEmpty) {
-        final newChapters = [
-          for (int i = 0; i < book.chapters.length; i++)
-            book.chapters[i].copyWith(
-              title: i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : null,
-            ),
-        ];
+        final newChapters = _pendingChapters != null
+            ? _pendingChapters!.map((e) => Chapter(title: e.title, start: e.start)).toList()
+            : book.chapters;
         updated = book.copyWith(
           title: newTitle,
           subtitle: newSubtitle.isEmpty ? null : newSubtitle,
@@ -263,10 +267,9 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
         );
       } else {
-        final newNames = [
-          for (int i = 0; i < book.audioFiles.length; i++)
-            i < _chapterCtrls.length ? _chapterCtrls[i].text.trim() : '',
-        ];
+        final newNames = _pendingChapters != null
+            ? _pendingChapters!.map((e) => e.title).toList()
+            : book.chapterNames;
         updated = book.copyWith(
           title: newTitle,
           subtitle: newSubtitle.isEmpty ? null : newSubtitle,
@@ -304,7 +307,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
         _originalPublisher = newPublisher;
         _originalLanguage = newLanguage;
         _originalGenre = newGenre;
-        _originalChapterTitles = _chapterCtrls.map((c) => c.text).toList();
+        _pendingChapters = null;
       });
     } catch (e) {
       errors.add(e.toString());
@@ -546,7 +549,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
             controller: _tabCtrl,
             tabs: [
               const Tab(text: 'Book'),
-              Tab(text: 'Chapters (${_chapters.length})'),
+              Tab(text: 'Chapters ($_chapterCount)'),
             ],
           ),
           Expanded(
@@ -688,6 +691,30 @@ class _BookDetailScreenState extends State<BookDetailScreen>
                   content: Text('Export failed: $e'),
                 ));
               }
+            } else if (value == 'export_cue') {
+              try {
+                final book = widget.book;
+                final chapters = _pendingChapters != null
+                    ? _pendingChapters!.map((e) => Chapter(title: e.title, start: e.start)).toList()
+                    : book.chapters;
+                final entries = chapters.map((c) => ChapterEntry(title: c.title, start: c.start)).toList();
+                await CueWriter.write(
+                  book.path,
+                  book.title ?? 'chapters',
+                  p.basename(book.audioFiles[0]),
+                  entries,
+                );
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Exported CUE sheet to ${book.path}'),
+                ));
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  backgroundColor: Colors.red[900],
+                  content: Text('CUE export failed: $e'),
+                ));
+              }
             }
           },
           itemBuilder: (_) => [
@@ -724,6 +751,18 @@ class _BookDetailScreenState extends State<BookDetailScreen>
                 ],
               ),
             ),
+            if (widget.book.audioFiles.length == 1 &&
+                p.extension(widget.book.audioFiles[0]).toLowerCase() == '.mp3')
+              const PopupMenuItem(
+                value: 'export_cue',
+                child: Row(
+                  children: [
+                    Icon(Icons.queue_music, size: 18),
+                    SizedBox(width: 8),
+                    Text('Export CUE'),
+                  ],
+                ),
+              ),
           ],
         ),
         const Spacer(),
@@ -771,7 +810,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
               : const Icon(Icons.refresh),
         ),
         FilledButton.icon(
-          onPressed: (_isDirty && !_applying) ? _apply : null,
+          onPressed: (_isDirty && !_applying && !_chapterHasErrors) ? _apply : null,
           icon: _applying
               ? const SizedBox(
                   width: 18,
@@ -799,7 +838,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _editableRow('Title', _titleCtrl, style: theme.textTheme.titleLarge),
+          _editableRow('Title', _titleCtrl),
           const SizedBox(height: 4),
           _editableRow('Subtitle', _subtitleCtrl),
           _editableRow('Author', _authorCtrl),
@@ -808,7 +847,8 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           _editableRow('Narrator', _narratorCtrl),
           if (book.additionalNarrators.isNotEmpty)
             _metaRow('Also narr.', book.additionalNarrators.join(', ')),
-          _editableRow('Published', _releaseDateCtrl),
+          _editableRow('Published', _releaseDateCtrl,
+              hint: 'YYYY or DD-MM-YYYY'),
           _editableRow('Series', _seriesCtrl),
           _editableRow('Series #', _seriesIndexCtrl),
           _editableRow('Publisher', _publisherCtrl),
@@ -822,7 +862,19 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   }
 
   Widget _buildChaptersTab(ThemeData theme) {
-    return _buildChapterTable(_chapters, theme);
+    return ChapterEditor(
+      book: widget.book,
+      onChanged: (chapters) {
+        _pendingChapters = chapters;
+        _onChanged();
+      },
+      onApplied: () {
+        _pendingChapters = null;
+      },
+      onHasErrors: (hasErrors) {
+        setState(() => _chapterHasErrors = hasErrors);
+      },
+    );
   }
 
   Widget _buildCover() {
@@ -925,7 +977,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   }
 
 Widget _editableRow(String label, TextEditingController ctrl,
-      {TextStyle? style, int maxLines = 1}) {
+      {int maxLines = 1, String? hint}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
@@ -941,13 +993,14 @@ Widget _editableRow(String label, TextEditingController ctrl,
           Expanded(
             child: TextField(
               controller: ctrl,
-              style: style,
               maxLines: maxLines,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 isDense: true,
                 contentPadding:
-                    EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                border: OutlineInputBorder(),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border: const OutlineInputBorder(),
+                hintText: hint,
+                hintStyle: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ),
           ),
@@ -973,78 +1026,6 @@ Widget _editableRow(String label, TextEditingController ctrl,
     );
   }
 
-  List<_ChapterRow> _buildChapterList() {
-    final book = widget.book;
-    if (book.chapters.isNotEmpty) {
-      return [
-        for (int i = 0; i < book.chapters.length; i++)
-          _ChapterRow(
-            index: i + 1,
-            title: book.chapters[i].title,
-            start: book.chapters[i].start,
-            duration: i + 1 < book.chapters.length
-                ? book.chapters[i + 1].start - book.chapters[i].start
-                : book.duration != null
-                    ? book.duration! - book.chapters[i].start
-                    : null,
-          ),
-      ];
-    }
-    return [
-      for (int i = 0; i < book.audioFiles.length; i++)
-        _ChapterRow(
-          index: i + 1,
-          title: i < book.chapterNames.length
-              ? book.chapterNames[i]
-              : p.basenameWithoutExtension(book.audioFiles[i]),
-          duration: i < book.chapterDurations.length
-              ? book.chapterDurations[i]
-              : null,
-          file: p.basename(book.audioFiles[i]),
-        ),
-    ];
-  }
-
-  Widget _buildChapterTable(List<_ChapterRow> chapters, ThemeData theme) {
-    return SingleChildScrollView(
-      child: DataTable(
-        columnSpacing: 24,
-        headingRowColor: WidgetStateProperty.all(Colors.grey[900]),
-        columns: const [
-          DataColumn(label: Text('#')),
-          DataColumn(label: Text('Title')),
-          DataColumn(label: Text('Start')),
-          DataColumn(label: Text('Duration')),
-          DataColumn(label: Text('File')),
-        ],
-        rows: [
-          for (int i = 0; i < chapters.length; i++)
-            DataRow(cells: [
-              DataCell(Text('${chapters[i].index}')),
-              DataCell(
-                i < _chapterCtrls.length
-                    ? TextField(
-                        controller: _chapterCtrls[i],
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          contentPadding: EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 6),
-                          border: OutlineInputBorder(),
-                        ),
-                      )
-                    : Text(chapters[i].title),
-              ),
-              DataCell(Text(chapters[i].start != null
-                  ? _formatDuration(chapters[i].start)!
-                  : '')),
-              DataCell(Text(_formatDuration(chapters[i].duration) ?? '')),
-              DataCell(Text(chapters[i].file ?? '')),
-            ]),
-        ],
-      ),
-    );
-  }
-
   String _formatFiles() {
     final files = widget.book.audioFiles;
     if (files.isEmpty) return '0';
@@ -1063,20 +1044,4 @@ Widget _editableRow(String label, TextEditingController ctrl,
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
-}
-
-class _ChapterRow {
-  final int index;
-  final String title;
-  final Duration? start;
-  final Duration? duration;
-  final String? file;
-
-  const _ChapterRow({
-    required this.index,
-    required this.title,
-    this.start,
-    this.duration,
-    this.file,
-  });
 }
