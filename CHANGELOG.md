@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-07-14
+
+### Changed
+- Extracted `LibraryController` (`ChangeNotifier`) from `_HomeScreenState` — all scanning, undo, dirty-tracking, batch selection, search, and sort logic now lives in `lib/controllers/library_controller.dart`
+- Split `MetadataWriter` (700+ line static class) into format-specific writers: `Mp3Writer`, `Mp4Writer`, `FlacWriter`, `OggWriter` under `lib/services/writers/`; `MetadataWriter` is now a thin orchestrator
+- `Audiobook.copyWith` now uses the sentinel pattern — all nullable fields can be explicitly cleared to `null`
+- Replaced hand-rolled `_base64Encode` in OGG cover embedding with `dart:convert`'s `base64Encode`
+- All intra-`lib/` imports converted to `package:` imports per `always_use_package_imports` lint rule
+- `ScannerService.naturalSortCompare` promoted to public static for testability
+
+### Fixed
+- Redundant `Endian.big` arguments removed from `ByteData.getUint32` calls (big-endian is the default)
+- Unnecessary `await` on tail-call returns in M4B chapter parser removed
+- Redundant `start: null` argument removed from `_ChapterRow` constructor
+
+### Added
+- `analysis_options.yaml` — 12 additional lint rules enabled: `prefer_single_quotes`, `avoid_print`, `always_use_package_imports`, `cancel_subscriptions`, `close_sinks`, `avoid_dynamic_calls`, `prefer_const_constructors`, `prefer_const_declarations`, `unnecessary_await_in_return`, `use_string_buffers`, `avoid_redundant_argument_values`, `noop_primitive_operations`
+- `.amazonq/rules/code-quality.md` — project coding standards for state management, models, services, error handling, testing, and linting
+- Unit tests: `test/models/audiobook_test.dart` (10 `copyWith` round-trip tests), `test/services/mp3_writer_test.dart` (5 syncsafe integer tests), `test/services/opf_parser_test.dart` (9 OPF parsing tests), `test/services/scanner_service_test.dart` (5 natural sort tests)
+
 ### Fixed
 - Toggle between OPF/merged and File tags no longer marks the form dirty
 - `_dirtyPaths` in sidebar now correctly shows orange dot when a book has unsaved changes

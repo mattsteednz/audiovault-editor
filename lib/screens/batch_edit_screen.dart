@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../models/audiobook.dart';
-import '../services/metadata_writer.dart';
+import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/metadata_writer.dart';
 
 class BatchEditScreen extends StatefulWidget {
   final List<Audiobook> books;

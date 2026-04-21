@@ -3,8 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:path/path.dart' as p;
-import '../models/audiobook.dart';
-import 'opf_parser.dart';
+import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/opf_parser.dart';
 
 class _CueSheet {
   final String? title;
@@ -106,7 +106,7 @@ class ScannerService {
         .where((f) => _isAudio(f.path))
         .map((f) => f.path)
         .toList()
-      ..sort(_naturalSort);
+      ..sort(naturalSortCompare);
     final imageFiles = allFiles.where((f) => _isImage(f.path)).toList();
 
     // CUE sheet — only used for file ordering and chapter timestamps
@@ -143,7 +143,7 @@ class ScannerService {
     for (final filePath in audioFiles) {
       try {
         final needArt = coverPath == null && coverBytes == null;
-        final meta = readMetadata(File(filePath), getImage: needArt);
+        final meta = readMetadata(File(filePath), getImage: needArt); // ignore: avoid_redundant_argument_values - value is dynamic
         chapterDurations.add(meta.duration ?? Duration.zero);
         totalDuration += meta.duration ?? Duration.zero;
         if (needArt && meta.pictures.isNotEmpty) {
@@ -157,7 +157,7 @@ class ScannerService {
     // Read extended tags from first file only
     if (audioFiles.isNotEmpty) {
       try {
-        final raw = readAllMetadata(File(audioFiles.first), getImage: false);
+        final raw = readAllMetadata(File(audioFiles.first), getImage: false); // ignore: avoid_redundant_argument_values - explicit false is clearer
         if (raw is Mp3Metadata) {
           fileTitle = raw.album?.trim().nullIfEmpty;
           fileAuthor = raw.leadPerformer?.trim().nullIfEmpty;
@@ -256,7 +256,7 @@ class ScannerService {
       final fileSize = await raf.length();
       final nero = await _scanForChpl(raf, 0, fileSize);
       if (nero.isNotEmpty) return nero;
-      return await _parseQTChapters(raf, fileSize);
+      return _parseQTChapters(raf, fileSize);
     } catch (_) {
       return const [];
     } finally {
@@ -273,14 +273,14 @@ class ScannerService {
       final hdr = await raf.read(8);
       if (hdr.length < 8) break;
       final bd = ByteData.sublistView(Uint8List.fromList(hdr));
-      var sz = bd.getUint32(0, Endian.big);
+      var sz = bd.getUint32(0); // big-endian is default
       final type = String.fromCharCodes(hdr.sublist(4, 8));
       int dataStart = pos + 8;
       if (sz == 1) {
         final ext = await raf.read(8);
         if (ext.length < 8) break;
         final ebd = ByteData.sublistView(Uint8List.fromList(ext));
-        sz = (ebd.getUint32(0, Endian.big) << 32) | ebd.getUint32(4, Endian.big);
+        sz = (ebd.getUint32(0) << 32) | ebd.getUint32(4);
         dataStart = pos + 16;
       } else if (sz == 0) {
         sz = end - pos;
@@ -322,13 +322,13 @@ class ScannerService {
     final bd = ByteData.sublistView(data);
     int offset = 5;
     if (offset + 4 > data.length) return const [];
-    final count = bd.getUint32(offset, Endian.big);
+    final count = bd.getUint32(offset);
     offset += 4;
     final chapters = <Chapter>[];
     for (int i = 0; i < count; i++) {
       if (offset + 9 > data.length) break;
-      final hi = bd.getUint32(offset, Endian.big);
-      final lo = bd.getUint32(offset + 4, Endian.big);
+      final hi = bd.getUint32(offset);
+      final lo = bd.getUint32(offset + 4);
       final units100ns = (hi << 32) | lo;
       offset += 8;
       final titleLen = data[offset++];
@@ -379,7 +379,7 @@ class ScannerService {
     if (stts == null || stsz == null || (stco == null && co64 == null)) {
       return const [];
     }
-    return await _extractQTChapters(raf, mdhd, stts, stsz, stco ?? co64!, stsc,
+    return _extractQTChapters(raf, mdhd, stts, stsz, stco ?? co64!, stsc,
         isco64: stco == null);
   }
 
@@ -399,16 +399,16 @@ class ScannerService {
     final stscData = stsc != null ? await _readBox(raf, stsc) : null;
 
     final mdhdBD = ByteData.sublistView(mdhdData);
-    final timeScale = mdhdBD.getUint32(mdhdData[0] == 1 ? 20 : 12, Endian.big);
+    final timeScale = mdhdBD.getUint32(mdhdData[0] == 1 ? 20 : 12);
     if (timeScale == 0) return const [];
 
     final sttsBD = ByteData.sublistView(sttsData);
-    final sttsCount = sttsBD.getUint32(4, Endian.big);
+    final sttsCount = sttsBD.getUint32(4);
     final sampleStarts = <int>[];
     int ticks = 0, off = 8;
     for (int i = 0; i < sttsCount && off + 8 <= sttsData.length; i++) {
-      final n = sttsBD.getUint32(off, Endian.big);
-      final d = sttsBD.getUint32(off + 4, Endian.big);
+      final n = sttsBD.getUint32(off);
+      final d = sttsBD.getUint32(off + 4);
       for (int j = 0; j < n; j++) {
         sampleStarts.add(ticks);
         ticks += d;
@@ -417,43 +417,43 @@ class ScannerService {
     }
 
     final stszBD = ByteData.sublistView(stszData);
-    final defSz = stszBD.getUint32(4, Endian.big);
-    final sampleCount = stszBD.getUint32(8, Endian.big);
+    final defSz = stszBD.getUint32(4);
+    final sampleCount = stszBD.getUint32(8);
     final sizes = <int>[];
     if (defSz == 0) {
       off = 12;
       for (int i = 0; i < sampleCount && off + 4 <= stszData.length; i++, off += 4) {
-        sizes.add(stszBD.getUint32(off, Endian.big));
+        sizes.add(stszBD.getUint32(off));
       }
     } else {
       sizes.addAll(List.filled(sampleCount, defSz));
     }
 
     final stcoBD = ByteData.sublistView(stcoData);
-    final chunkCount = stcoBD.getUint32(4, Endian.big);
+    final chunkCount = stcoBD.getUint32(4);
     final chunkOffsets = <int>[];
     off = 8;
     if (isco64) {
       for (int i = 0; i < chunkCount && off + 8 <= stcoData.length; i++, off += 8) {
-        final hi = stcoBD.getUint32(off, Endian.big);
-        final lo = stcoBD.getUint32(off + 4, Endian.big);
+        final hi = stcoBD.getUint32(off);
+        final lo = stcoBD.getUint32(off + 4);
         chunkOffsets.add((hi << 32) | lo);
       }
     } else {
       for (int i = 0; i < chunkCount && off + 4 <= stcoData.length; i++, off += 4) {
-        chunkOffsets.add(stcoBD.getUint32(off, Endian.big));
+        chunkOffsets.add(stcoBD.getUint32(off));
       }
     }
 
     final sampleOffsets = <int>[];
     if (stscData != null && stscData.length >= 8) {
       final stscBD = ByteData.sublistView(stscData);
-      final stscCount = stscBD.getUint32(4, Endian.big);
+      final stscCount = stscBD.getUint32(4);
       final runs = <(int, int)>[];
       off = 8;
       for (int i = 0; i < stscCount && off + 12 <= stscData.length; i++, off += 12) {
-        runs.add((stscBD.getUint32(off, Endian.big) - 1,
-                  stscBD.getUint32(off + 4, Endian.big)));
+        runs.add((stscBD.getUint32(off) - 1,
+                  stscBD.getUint32(off + 4)));
       }
       int sIdx = 0;
       for (int c = 0; c < chunkOffsets.length; c++) {
@@ -513,7 +513,8 @@ class ScannerService {
     return images.first.path;
   }
 
-  int _naturalSort(String a, String b) {
+  /// Public static comparator for testing.
+  static int naturalSortCompare(String a, String b) {
     final nameA = p.basename(a).toLowerCase();
     final nameB = p.basename(b).toLowerCase();
     final re = RegExp(r'(\d+)|(\D+)');

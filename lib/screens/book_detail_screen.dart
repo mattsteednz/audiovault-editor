@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import '../models/audiobook.dart';
-import '../services/metadata_writer.dart';
+import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/metadata_writer.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final Audiobook book;
@@ -606,7 +606,6 @@ class _BookDetailScreenState extends State<BookDetailScreen> {
           title: i < book.chapterNames.length
               ? book.chapterNames[i]
               : p.basenameWithoutExtension(book.audioFiles[i]),
-          start: null,
           duration: i < book.chapterDurations.length
               ? book.chapterDurations[i]
               : null,

@@ -65,49 +65,76 @@ class Audiobook {
     this.fileSubtitleRaw,
   });
 
+  // Sentinel used to distinguish "not passed" from "explicitly null".
+  static const Object _unset = Object();
+
   Audiobook copyWith({
-    String? title,
-    String? author,
-    String? narrator,
-    String? subtitle,
-    String? releaseDate,
-    String? coverImagePath,
-    String? series,
-    int? seriesIndex,
-    String? description,
+    Object? title = _unset,
+    Object? author = _unset,
+    Object? narrator = _unset,
+    Object? subtitle = _unset,
+    Object? releaseDate = _unset,
+    Object? coverImagePath = _unset,
+    Object? coverImageBytes = _unset,
+    Object? series = _unset,
+    Object? seriesIndex = _unset,
+    Object? description = _unset,
+    Object? publisher = _unset,
+    Object? language = _unset,
+    Object? duration = _unset,
     List<Chapter>? chapters,
     List<String>? chapterNames,
-    String? pendingCoverPath,
-    String? fileTitleRaw,
-    String? fileAuthorRaw,
-    String? fileNarratorRaw,
-    String? fileReleaseDateRaw,
-    String? fileSubtitleRaw,
+    List<String>? audioFiles,
+    List<Duration>? chapterDurations,
+    Object? pendingCoverPath = _unset,
+    Object? fileTitleRaw = _unset,
+    Object? fileAuthorRaw = _unset,
+    Object? fileNarratorRaw = _unset,
+    Object? fileReleaseDateRaw = _unset,
+    Object? fileSubtitleRaw = _unset,
   }) =>
       Audiobook(
-        title: title ?? this.title,
-        author: author ?? this.author,
-        duration: duration,
+        title: title == _unset ? this.title : title as String?,
+        author: author == _unset ? this.author : author as String?,
+        duration: duration == _unset ? this.duration : duration as Duration?,
         path: path,
-        coverImagePath: coverImagePath ?? this.coverImagePath,
-        coverImageBytes: coverImageBytes,
-        audioFiles: audioFiles,
-        chapterDurations: chapterDurations,
+        coverImagePath: coverImagePath == _unset
+            ? this.coverImagePath
+            : coverImagePath as String?,
+        coverImageBytes: coverImageBytes == _unset
+            ? this.coverImageBytes
+            : coverImageBytes as Uint8List?,
+        audioFiles: audioFiles ?? this.audioFiles,
+        chapterDurations: chapterDurations ?? this.chapterDurations,
         chapters: chapters ?? this.chapters,
         chapterNames: chapterNames ?? this.chapterNames,
-        narrator: narrator ?? this.narrator,
-        subtitle: subtitle ?? this.subtitle,
-        description: description ?? this.description,
-        publisher: publisher,
-        language: language,
-        releaseDate: releaseDate ?? this.releaseDate,
-        series: series ?? this.series,
-        seriesIndex: seriesIndex ?? this.seriesIndex,
-        pendingCoverPath: pendingCoverPath ?? this.pendingCoverPath,
-        fileTitleRaw: fileTitleRaw ?? this.fileTitleRaw,
-        fileAuthorRaw: fileAuthorRaw ?? this.fileAuthorRaw,
-        fileNarratorRaw: fileNarratorRaw ?? this.fileNarratorRaw,
-        fileReleaseDateRaw: fileReleaseDateRaw ?? this.fileReleaseDateRaw,
-        fileSubtitleRaw: fileSubtitleRaw ?? this.fileSubtitleRaw,
+        narrator: narrator == _unset ? this.narrator : narrator as String?,
+        subtitle: subtitle == _unset ? this.subtitle : subtitle as String?,
+        description:
+            description == _unset ? this.description : description as String?,
+        publisher: publisher == _unset ? this.publisher : publisher as String?,
+        language: language == _unset ? this.language : language as String?,
+        releaseDate:
+            releaseDate == _unset ? this.releaseDate : releaseDate as String?,
+        series: series == _unset ? this.series : series as String?,
+        seriesIndex:
+            seriesIndex == _unset ? this.seriesIndex : seriesIndex as int?,
+        pendingCoverPath: pendingCoverPath == _unset
+            ? this.pendingCoverPath
+            : pendingCoverPath as String?,
+        fileTitleRaw:
+            fileTitleRaw == _unset ? this.fileTitleRaw : fileTitleRaw as String?,
+        fileAuthorRaw: fileAuthorRaw == _unset
+            ? this.fileAuthorRaw
+            : fileAuthorRaw as String?,
+        fileNarratorRaw: fileNarratorRaw == _unset
+            ? this.fileNarratorRaw
+            : fileNarratorRaw as String?,
+        fileReleaseDateRaw: fileReleaseDateRaw == _unset
+            ? this.fileReleaseDateRaw
+            : fileReleaseDateRaw as String?,
+        fileSubtitleRaw: fileSubtitleRaw == _unset
+            ? this.fileSubtitleRaw
+            : fileSubtitleRaw as String?,
       );
 }
