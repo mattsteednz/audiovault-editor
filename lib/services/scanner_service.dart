@@ -261,6 +261,15 @@ class ScannerService {
   // ── M4B chapter parsing ───────────────────────────────────────────────────
 
   Future<List<Chapter>> _parseM4bChapters(String filePath) async {
+    try {
+      return await _parseM4bChaptersInner(filePath)
+          .timeout(const Duration(seconds: 10), onTimeout: () => const []);
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<List<Chapter>> _parseM4bChaptersInner(String filePath) async {
     RandomAccessFile? raf;
     try {
       raf = await File(filePath).open();
@@ -316,13 +325,23 @@ class ScannerService {
   }
 
   Future<List<Chapter>> _scanForChpl(
-      RandomAccessFile raf, int start, int end) async {
+      RandomAccessFile raf, int start, int end,
+      {int depth = 0}) async {
+    if (depth > 8) return const [];
     final boxes = await _listBoxes(raf, start, end);
     for (final box in boxes) {
       if (box.$1 == 'chpl') return _parseChpl(await _readBox(raf, box));
-      if (box.$1 == 'moov' || box.$1 == 'udta' || box.$1 == 'meta') {
-        final result = await _scanForChpl(raf, box.$2, box.$3);
+      if (box.$1 == 'moov' || box.$1 == 'udta') {
+        final result = await _scanForChpl(raf, box.$2, box.$3, depth: depth + 1);
         if (result.isNotEmpty) return result;
+      }
+      if (box.$1 == 'meta') {
+        // meta box has a 4-byte version/flags prefix before children
+        final childStart = box.$2 + 4;
+        if (childStart < box.$3) {
+          final result = await _scanForChpl(raf, childStart, box.$3, depth: depth + 1);
+          if (result.isNotEmpty) return result;
+        }
       }
     }
     return const [];
@@ -420,11 +439,12 @@ class ScannerService {
     for (int i = 0; i < sttsCount && off + 8 <= sttsData.length; i++) {
       final n = sttsBD.getUint32(off);
       final d = sttsBD.getUint32(off + 4);
-      for (int j = 0; j < n; j++) {
+      for (int j = 0; j < n && sampleStarts.length < 10000; j++) {
         sampleStarts.add(ticks);
         ticks += d;
       }
       off += 8;
+      if (sampleStarts.length >= 10000) break;
     }
 
     final stszBD = ByteData.sublistView(stszData);
