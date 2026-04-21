@@ -149,6 +149,15 @@ class LibraryController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clear all batch selections.
+  void clearBatchSelection() {
+    _batchPaths.clear();
+    notifyListeners();
+  }
+
+  /// Number of books currently selected for batch editing.
+  int get batchSelectionCount => _batchPaths.length;
+
   void markDirty(String path, {required bool dirty}) {
     if (dirty) {
       _dirtyPaths.add(path);

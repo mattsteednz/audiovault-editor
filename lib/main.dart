@@ -7,6 +7,10 @@ import 'package:audiovault_editor/controllers/library_controller.dart';
 import 'package:audiovault_editor/screens/book_detail_screen.dart';
 import 'package:audiovault_editor/screens/batch_edit_screen.dart';
 import 'package:audiovault_editor/services/preferences_service.dart';
+import 'package:audiovault_editor/widgets/sort_button.dart';
+import 'package:audiovault_editor/widgets/cover_thumbnail.dart';
+import 'package:audiovault_editor/widgets/batch_selection_banner.dart';
+import 'package:audiovault_editor/widgets/resizable_sidebar.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,13 +51,16 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WindowListener {
   final _ctrl = LibraryController();
   final _searchCtrl = TextEditingController();
+  final _searchFocusNode = FocusNode();
   String? _folderLoadError;
+  double _sidebarWidth = 300;
 
   @override
   void initState() {
     super.initState();
     _ctrl.addListener(_onControllerChanged);
     windowManager.addListener(this);
+    _searchCtrl.addListener(_onSearchChanged);
     _restorePreferences();
   }
 
@@ -62,7 +69,9 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     windowManager.removeListener(this);
     _ctrl.removeListener(_onControllerChanged);
     _ctrl.dispose();
+    _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -77,6 +86,12 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     final sortOrder = await PreferencesService.loadSortOrder();
     if (sortOrder != null) {
       _ctrl.setSortOrder(sortOrder);
+    }
+
+    // Restore sidebar width
+    final sidebarWidth = await PreferencesService.loadSidebarWidth();
+    if (sidebarWidth != null && mounted) {
+      setState(() => _sidebarWidth = sidebarWidth);
     }
 
     // Restore folder path
@@ -102,6 +117,8 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   void _onControllerChanged() => setState(() {});
 
+  void _onSearchChanged() => setState(() {});
+
   Future<void> _pickFolder() async {
     final result = await FilePicker.getDirectoryPath(
       dialogTitle: 'Select audiobook library folder',
@@ -112,8 +129,16 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     await _ctrl.pickFolder(result);
   }
 
+  void _clearSearch() {
+    _searchCtrl.clear();
+    _ctrl.setSearchQuery('');
+    _searchFocusNode.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasBatchBanner = _ctrl.batchPaths.length >= 2;
+
     return Scaffold(
       body: Column(
         children: [
@@ -130,9 +155,14 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
           Expanded(
             child: Row(
               children: [
+                // ── Resizable sidebar ──
                 ExcludeFocus(
-                  child: SizedBox(
-                    width: 300,
+                  child: ResizableSidebar(
+                    initialWidth: _sidebarWidth,
+                    onWidthChanged: (w) {
+                      setState(() => _sidebarWidth = w);
+                      PreferencesService.saveSidebarWidth(w);
+                    },
                     child: Column(
                       children: [
                         _buildToolbar(),
@@ -141,36 +171,57 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                     ),
                   ),
                 ),
-                const VerticalDivider(width: 1),
+                // ── Detail panel ──
                 Expanded(
-                  child: FocusScope(
-                    child: _ctrl.batchPaths.length >= 2
-                        ? BatchEditScreen(
-                            key: ValueKey(_ctrl.batchPaths.join()),
-                            books: _ctrl.books
-                                .where((b) => _ctrl.batchPaths.contains(b.path))
-                                .toList(),
-                            onApplied: _ctrl.onBatchApplied,
-                          )
-                        : _ctrl.selected != null
-                            ? BookDetailScreen(
-                                key: ValueKey(_ctrl.selected!.path),
-                                book: _ctrl.selected!,
-                                allBooks: _ctrl.books,
-                                onApply: _ctrl.onBookApplied,
-                                onRescan: _ctrl.rescanSelected,
-                                onUndo: _ctrl.undoSnapshot?.path ==
-                                        _ctrl.selected!.path
-                                    ? _ctrl.undo
-                                    : null,
-                                onDirtyChanged: (dirty) =>
-                                    _ctrl.markDirty(_ctrl.selected!.path, dirty: dirty),
-                                onRenamed: _ctrl.onBookRenamed,
-                              )
-                            : const Center(
-                                child: Text('Select a book to view metadata',
-                                    style: TextStyle(color: Colors.grey)),
-                              ),
+                  child: Column(
+                    children: [
+                      // Batch selection banner
+                      if (hasBatchBanner)
+                        BatchSelectionBanner(
+                          selectionCount: _ctrl.batchPaths.length,
+                          onClearSelection: _ctrl.clearBatchSelection,
+                          onEditAll: () {
+                            // Banner is shown when batchPaths >= 2, which already
+                            // triggers BatchEditScreen below — just a no-op here
+                            // since the screen switches automatically.
+                          },
+                        ),
+                      Expanded(
+                        child: FocusScope(
+                          child: _ctrl.batchPaths.length >= 2
+                              ? BatchEditScreen(
+                                  key: ValueKey(_ctrl.batchPaths.join()),
+                                  books: _ctrl.books
+                                      .where((b) =>
+                                          _ctrl.batchPaths.contains(b.path))
+                                      .toList(),
+                                  onApplied: _ctrl.onBatchApplied,
+                                )
+                              : _ctrl.selected != null
+                                  ? BookDetailScreen(
+                                      key: ValueKey(_ctrl.selected!.path),
+                                      book: _ctrl.selected!,
+                                      allBooks: _ctrl.books,
+                                      onApply: _ctrl.onBookApplied,
+                                      onRescan: _ctrl.rescanSelected,
+                                      onUndo: _ctrl.undoSnapshot?.path ==
+                                              _ctrl.selected!.path
+                                          ? _ctrl.undo
+                                          : null,
+                                      onDirtyChanged: (dirty) => _ctrl
+                                          .markDirty(_ctrl.selected!.path,
+                                              dirty: dirty),
+                                      onRenamed: _ctrl.onBookRenamed,
+                                    )
+                                  : const Center(
+                                      child: Text(
+                                          'Select a book to view metadata',
+                                          style:
+                                              TextStyle(color: Colors.grey)),
+                                    ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -200,56 +251,40 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchCtrl,
-                    onChanged: _ctrl.setSearchQuery,
-                    decoration: const InputDecoration(
-                      hintText: 'Search...',
-                      isDense: true,
-                      prefixIcon: Icon(Icons.search, size: 16),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                PopupMenuButton<SortOrder>(
-                  tooltip: 'Sort',
-                  icon: const Icon(Icons.sort, size: 18),
-                  onSelected: _ctrl.setSortOrder,
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                        value: SortOrder.titleAsc, child: Text('Title A–Z')),
-                    PopupMenuItem(
-                        value: SortOrder.titleDesc, child: Text('Title Z–A')),
-                    PopupMenuItem(
-                        value: SortOrder.authorAsc, child: Text('Author A–Z')),
-                    PopupMenuItem(
-                        value: SortOrder.authorDesc,
-                        child: Text('Author Z–A')),
-                    PopupMenuItem(
-                        value: SortOrder.seriesAsc, child: Text('Series A–Z')),
-                    PopupMenuItem(
-                        value: SortOrder.narratorAsc,
-                        child: Text('Narrator A–Z')),
-                    PopupMenuItem(
-                        value: SortOrder.durationAsc,
-                        child: Text('Duration ↑')),
-                    PopupMenuItem(
-                        value: SortOrder.durationDesc,
-                        child: Text('Duration ↓')),
-                  ],
-                ),
-              ],
+            // Search field with clear button
+            TextField(
+              controller: _searchCtrl,
+              focusNode: _searchFocusNode,
+              onChanged: _ctrl.setSearchQuery,
+              decoration: InputDecoration(
+                hintText: 'Search...',
+                isDense: true,
+                prefixIcon: const Icon(Icons.search, size: 16),
+                suffixIcon: _searchCtrl.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, size: 16),
+                        tooltip: 'Clear search',
+                        onPressed: _clearSearch,
+                      )
+                    : null,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 4),
+            // Sort button showing current order
+            Align(
+              alignment: Alignment.centerLeft,
+              child: SortButton(
+                currentOrder: _ctrl.sortOrder,
+                onOrderChanged: _ctrl.setSortOrder,
+              ),
             ),
             const SizedBox(height: 4),
             if (_ctrl.scanning)
               Text(
-                'Scanning… ${_ctrl.scanFound} book(s) found',
+                'Scanning\u2026 ${_ctrl.scanFound} book(s) found',
                 style: const TextStyle(fontSize: 11, color: Colors.grey),
               )
             else
@@ -257,32 +292,33 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                 '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
                 style: const TextStyle(fontSize: 11, color: Colors.grey),
               ),
-            if (_ctrl.duplicateCount > 0 || _ctrl.missingCoverCount > 0) ...[
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 4,
-                children: [
-                  if (_ctrl.duplicateCount > 0)
-                    FilterChip(
-                      label: Text('Dupes (${_ctrl.duplicateCount})'),
-                      selected: _ctrl.showDuplicatesOnly,
-                      onSelected: (_) => _ctrl.toggleShowDuplicates(),
-                      labelStyle: const TextStyle(fontSize: 11),
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  if (_ctrl.missingCoverCount > 0)
-                    FilterChip(
-                      label: Text('No cover (${_ctrl.missingCoverCount})'),
-                      selected: _ctrl.showMissingCoverOnly,
-                      onSelected: (_) => _ctrl.toggleShowMissingCover(),
-                      labelStyle: const TextStyle(fontSize: 11),
-                      padding: EdgeInsets.zero,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                ],
-              ),
-            ],
+            const SizedBox(height: 6),
+            // Filter chips — always visible, disabled when count is 0
+            Wrap(
+              spacing: 4,
+              children: [
+                FilterChip(
+                  label: Text('Dupes (${_ctrl.duplicateCount})'),
+                  selected: _ctrl.showDuplicatesOnly,
+                  onSelected: _ctrl.duplicateCount > 0
+                      ? (_) => _ctrl.toggleShowDuplicates()
+                      : null,
+                  labelStyle: const TextStyle(fontSize: 11),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+                FilterChip(
+                  label: Text('No cover (${_ctrl.missingCoverCount})'),
+                  selected: _ctrl.showMissingCoverOnly,
+                  onSelected: _ctrl.missingCoverCount > 0
+                      ? (_) => _ctrl.toggleShowMissingCover()
+                      : null,
+                  labelStyle: const TextStyle(fontSize: 11),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
           ],
           if (_ctrl.scanning)
             Padding(
@@ -316,12 +352,8 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
           selectedTileColor: Colors.white10,
           dense: true,
           onTap: () => _ctrl.selectBook(book),
-          leading: Checkbox(
-            value: isChecked,
-            onChanged: (checked) {
-              _ctrl.toggleBatch(book, selected: checked == true);
-            },
-          ),
+          // Cover thumbnail as leading
+          leading: CoverThumbnail(book: book),
           title: Row(
             children: [
               if (_ctrl.dirtyPaths.contains(book.path))
@@ -340,12 +372,14 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
               if (_ctrl.duplicatePaths.contains(book.path))
                 const Padding(
                   padding: EdgeInsets.only(right: 4),
-                  child: Icon(Icons.warning_amber, size: 12, color: Colors.amber),
+                  child: Icon(Icons.warning_amber,
+                      size: 12, color: Colors.amber),
                 ),
               if (_ctrl.missingCoverPaths.contains(book.path))
                 const Padding(
                   padding: EdgeInsets.only(right: 4),
-                  child: Icon(Icons.image_not_supported, size: 12, color: Colors.grey),
+                  child: Icon(Icons.image_not_supported,
+                      size: 12, color: Colors.grey),
                 ),
               Expanded(
                 child: Text(
@@ -356,6 +390,13 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                 ),
               ),
             ],
+          ),
+          // Checkbox in trailing position (Gmail pattern)
+          trailing: Checkbox(
+            value: isChecked,
+            onChanged: (checked) {
+              _ctrl.toggleBatch(book, selected: checked == true);
+            },
           ),
         );
       },

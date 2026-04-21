@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audiovault_editor/controllers/library_controller.dart';
 
@@ -10,6 +11,7 @@ class PreferencesService {
   static const _keyWindowY = 'window_y';
   static const _keyWindowWidth = 'window_width';
   static const _keyWindowHeight = 'window_height';
+  static const _keySidebarWidth = 'sidebar_width';
 
   /// Save the last-opened folder path.
   static Future<void> saveFolder(String path) async {
@@ -64,5 +66,28 @@ class PreferencesService {
     final h = prefs.getDouble(_keyWindowHeight);
     if (x == null || y == null || w == null || h == null) return null;
     return Rect.fromLTWH(x, y, w, h);
+  }
+
+  /// Save the sidebar width preference.
+  static Future<void> saveSidebarWidth(double width) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_keySidebarWidth, width);
+    } catch (e) {
+      // Graceful degradation - log but don't throw
+      debugPrint('Failed to save sidebar width: $e');
+    }
+  }
+
+  /// Load the saved sidebar width, or null if none saved.
+  static Future<double?> loadSidebarWidth() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getDouble(_keySidebarWidth);
+    } catch (e) {
+      // Graceful degradation - return null to use default
+      debugPrint('Failed to load sidebar width: $e');
+      return null;
+    }
   }
 }

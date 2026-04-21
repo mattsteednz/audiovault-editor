@@ -68,6 +68,32 @@ class MetadataWriter {
     return errors;
   }
 
+  /// Writes chapter data to the audio file for single-file M4B/M4A books.
+  ///
+  /// For MP3 books, chapters are stored in a CUE file (not embedded).
+  /// Returns per-file error strings; empty = success.
+  static Future<List<String>> applyChapters(
+    Audiobook book,
+    List<Chapter> chapters,
+  ) async {
+    if (chapters.isEmpty) return const [];
+    if (book.audioFiles.length != 1) return const [];
+
+    final filePath = book.audioFiles.first;
+    final ext = p.extension(filePath).toLowerCase();
+
+    if (ext == '.m4b' || ext == '.m4a') {
+      try {
+        await Mp4Writer.writeChapters(filePath, chapters, book.duration);
+        return const [];
+      } catch (e) {
+        return ['${p.basename(filePath)}: $e'];
+      }
+    }
+    // MP3: chapters stored in CUE file, not embedded
+    return const [];
+  }
+
   // ── OPF / cover export ────────────────────────────────────────────────────
 
   static Future<void> exportMetadata(Audiobook book) async {
