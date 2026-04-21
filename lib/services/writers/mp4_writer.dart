@@ -42,7 +42,7 @@ class Mp4Writer {
     final atoms = <Uint8List>[
       if (book.title != null && book.title!.isNotEmpty)
         _buildTextAtom('\u00a9alb', book.title!),
-      if (book.subtitle != null) _buildTextAtom('\u00a9nam', book.subtitle!),
+      if (book.subtitle != null) _buildTextAtom('\u00a9st3', book.subtitle!),
       if (book.author != null) _buildTextAtom('\u00a9ART', book.author!),
       if (book.narrator != null) _buildTextAtom('\u00a9wrt', book.narrator!),
       if (book.releaseDate != null)

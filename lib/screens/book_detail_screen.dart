@@ -5,21 +5,26 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
+import 'package:audiovault_editor/widgets/copy_from_dialog.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final Audiobook book;
+  final List<Audiobook> allBooks;
   final void Function(Audiobook updated) onApply;
   final void Function() onRescan;
   final void Function()? onUndo;
   final void Function(bool isDirty) onDirtyChanged;
+  final void Function(String oldPath, String newPath)? onRenamed;
 
   const BookDetailScreen({
     super.key,
     required this.book,
+    required this.allBooks,
     required this.onApply,
     required this.onRescan,
     this.onUndo,
     required this.onDirtyChanged,
+    this.onRenamed,
   });
 
   @override
@@ -316,6 +321,163 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     }
   }
 
+  Future<void> _copyFrom() async {
+    final otherBooks = widget.allBooks
+        .where((b) => b.path != widget.book.path)
+        .toList();
+    if (otherBooks.isEmpty) return;
+
+    final result = await showDialog<(Audiobook, Set<String>)>(
+      context: context,
+      builder: (ctx) => CopyFromDialog(books: otherBooks),
+    );
+
+    if (result == null) return;
+    final (sourceBook, fields) = result;
+
+    // Remove listeners temporarily to avoid triggering dirty state during bulk updates
+    _authorCtrl.removeListener(_onChanged);
+    _narratorCtrl.removeListener(_onChanged);
+    _seriesCtrl.removeListener(_onChanged);
+    _seriesIndexCtrl.removeListener(_onChanged);
+    _genreCtrl.removeListener(_onChanged);
+    _publisherCtrl.removeListener(_onChanged);
+    _languageCtrl.removeListener(_onChanged);
+
+    if (fields.contains('author')) {
+      _authorCtrl.text = sourceBook.author ?? '';
+    }
+    if (fields.contains('narrator')) {
+      _narratorCtrl.text = sourceBook.narrator ?? '';
+    }
+    if (fields.contains('series')) {
+      _seriesCtrl.text = sourceBook.series ?? '';
+    }
+    if (fields.contains('seriesIndex')) {
+      _seriesIndexCtrl.text = sourceBook.seriesIndex?.toString() ?? '';
+    }
+    if (fields.contains('genre')) {
+      _genreCtrl.text = sourceBook.genre ?? '';
+    }
+    if (fields.contains('publisher')) {
+      _publisherCtrl.text = sourceBook.publisher ?? '';
+    }
+    if (fields.contains('language')) {
+      _languageCtrl.text = sourceBook.language ?? '';
+    }
+
+    // Re-add listeners and trigger change detection
+    _authorCtrl.addListener(_onChanged);
+    _narratorCtrl.addListener(_onChanged);
+    _seriesCtrl.addListener(_onChanged);
+    _seriesIndexCtrl.addListener(_onChanged);
+    _genreCtrl.addListener(_onChanged);
+    _publisherCtrl.addListener(_onChanged);
+    _languageCtrl.addListener(_onChanged);
+
+    _onChanged();
+  }
+
+  Future<void> _renameFolder() async {
+    final book = widget.book;
+    final currentName = p.basename(book.path);
+    
+    // Propose a new name based on metadata
+    final author = _authorCtrl.text.trim().isEmpty 
+        ? 'Unknown' 
+        : _authorCtrl.text.trim();
+    final title = _titleCtrl.text.trim().isEmpty 
+        ? 'Untitled' 
+        : _titleCtrl.text.trim();
+    
+    // Make filesystem-safe by removing invalid characters
+    final proposedName = '$author - $title'
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    final controller = TextEditingController(text: proposedName);
+    
+    final confirmed = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename folder'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Current name:', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 4),
+            Text(currentName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
+            const Text('New name:', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Enter new folder name',
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+    
+    if (confirmed == null || confirmed.isEmpty || confirmed == currentName) {
+      return;
+    }
+
+    // Perform the rename
+    try {
+      final parentDir = Directory(book.path).parent;
+      final newPath = p.join(parentDir.path, confirmed);
+      
+      // Check if target already exists
+      if (await Directory(newPath).exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            backgroundColor: Colors.red[900],
+            content: Text('A folder named "$confirmed" already exists'),
+          ));
+        }
+        return;
+      }
+
+      // Rename the directory
+      await Directory(book.path).rename(newPath);
+      
+      // Notify parent to update the book list
+      widget.onRenamed?.call(book.path, newPath);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Renamed folder to "$confirmed"'),
+        ));
+      }
+    } on FileSystemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          backgroundColor: Colors.red[900],
+          content: Text('Failed to rename folder: ${e.message}'),
+        ));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -437,6 +599,10 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   }
 
   Widget _buildActionBar(ThemeData theme) {
+    final otherBooks = widget.allBooks
+        .where((b) => b.path != widget.book.path)
+        .toList();
+
     return Row(
       children: [
         ToggleButtons(
@@ -479,6 +645,35 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           ],
         ),
         const Spacer(),
+        OutlinedButton.icon(
+          onPressed: otherBooks.isEmpty ? null : _copyFrom,
+          icon: const Icon(Icons.content_copy, size: 18),
+          label: const Text('Copy from…'),
+        ),
+        const SizedBox(width: 8),
+        PopupMenuButton<String>(
+          tooltip: 'More actions',
+          icon: const Icon(Icons.more_vert),
+          onSelected: (value) async {
+            if (value == 'rename') {
+              await _renameFolder();
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'rename',
+              enabled: !_applying && !_rescanning,
+              child: const Row(
+                children: [
+                  Icon(Icons.drive_file_rename_outline, size: 18),
+                  SizedBox(width: 8),
+                  Text('Rename folder'),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(width: 8),
         PopupMenuButton<String>(
           tooltip: 'Export',
           child: OutlinedButton.icon(

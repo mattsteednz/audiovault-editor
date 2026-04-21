@@ -4,6 +4,7 @@ class OpfMetadata {
   final String? title;
   final String? author;
   final String? narrator;
+  final String? subtitle;
   final String? description;
   final String? publisher;
   final String? language;
@@ -20,6 +21,7 @@ class OpfMetadata {
     this.title,
     this.author,
     this.narrator,
+    this.subtitle,
     this.description,
     this.publisher,
     this.language,
@@ -44,6 +46,7 @@ OpfMetadata parseOpf(String xmlContent) {
     String? title;
     final authors = <String>[];
     final narrators = <String>[];
+    String? subtitle;
     String? description;
     String? publisher;
     String? language;
@@ -87,6 +90,8 @@ OpfMetadata parseOpf(String xmlContent) {
       } else if (name == 'calibre:series_index') {
         final d = double.tryParse(content);
         if (d != null) seriesIndex = d.round();
+      } else if (name == 'subtitle') {
+        subtitle = content;
       } else if (name.isNotEmpty) {
         opfMeta[name] = content;
       }
@@ -96,6 +101,7 @@ OpfMetadata parseOpf(String xmlContent) {
       title: title,
       author: authors.firstOrNull,
       narrator: narrators.firstOrNull,
+      subtitle: subtitle,
       description: description,
       publisher: publisher,
       language: language,

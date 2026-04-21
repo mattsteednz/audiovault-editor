@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0] - TBD
+
+### Added
+- FLAC and OGG metadata write — Apply now writes title, author, narrator, publisher, language, genre, and description to FLAC and OGG Vorbis comment tags (PRD-27)
+- Scan progress indicator — live book count and determinate progress bar during library scan (PRD-25)
+- Preferences persistence — last-opened folder, sort order, and window size/position are automatically restored on launch (PRD-24)
+- Copy metadata from another book — "Copy from…" button in detail panel opens a searchable dialog to copy author, narrator, series, genre, publisher, or language from any other book in the library (PRD-18)
+- Rename folder — "Rename folder" action in detail panel proposes a new folder name based on current metadata; renames the folder on disk and updates all internal paths (PRD-16)
+
+### Fixed
+- Subtitle / description OPF conflict — subtitle now uses `<meta name="subtitle">` instead of `dc:description opf:file-as="subtitle"`; OPF parser reads subtitle from `<meta name="subtitle">` and excludes it from passthrough; subtitle survives round-trip (PRD-22)
+- MP4 subtitle atom — changed from `©nam` (track title) to `©st3` (iTunes subtitle) for correct player display (PRD-22)
+- MP4 narrator tag — narrator written to `©wrt` (composer) atom for broad player compatibility; OPF is authoritative source when present (PRD-23)
+
+### Changed
+- OPF subtitle field now wins over file tags (consistent with other metadata fields)
+- Book list click behavior — clicking book title/author text now selects that book (switches to detail view); clicking the checkbox toggles batch selection without switching books (PRD-28)
+
 ## [1.1.0] - 2025-07-10
 
 ### Added

@@ -31,7 +31,8 @@ class ScannerService {
       _scanSubfolder(Directory(folderPath));
 
   Future<List<Audiobook>> scanFolder(String folderPath,
-      {void Function(Audiobook)? onBookFound}) async {
+      {void Function(Audiobook)? onBookFound,
+      void Function(int found, int total)? onProgress}) async {
     final dir = Directory(folderPath);
     if (!await dir.exists()) return [];
 
@@ -41,13 +42,15 @@ class ScannerService {
         .where((d) => !p.basename(d.path).startsWith('.'))
         .toList();
 
+    final total = subdirs.length;
     final books = <Audiobook>[];
-    for (final subdir in subdirs) {
-      final results = await _scanAsBookOrAuthorFolder(subdir);
+    for (int i = 0; i < subdirs.length; i++) {
+      final results = await _scanAsBookOrAuthorFolder(subdirs[i]);
       for (final book in results) {
         onBookFound?.call(book);
       }
       books.addAll(results);
+      onProgress?.call(books.length, total);
     }
 
     final rootBook = await _scanSubfolder(dir);
@@ -174,6 +177,8 @@ class ScannerService {
         } else if (raw is Mp4Metadata) {
           fileTitle = raw.album?.trim().nullIfEmpty;
           fileAuthor = raw.artist?.trim().nullIfEmpty;
+          // Note: Mp4Metadata does not expose composer (©wrt) atom.
+          // Narrator for M4B files is read from OPF when present.
           fileReleaseDate = raw.year?.year != null ? raw.year!.year.toString() : null;
           fileGenre = raw.genre?.trim().nullIfEmpty;
         } else if (raw is VorbisMetadata) {
@@ -206,7 +211,7 @@ class ScannerService {
     final title = opf.title ?? fileTitle;
     final author = opf.author ?? fileAuthor;
     final narrator = opf.narrator ?? fileNarrator;
-    final subtitle = fileSubtitle;
+    final subtitle = opf.subtitle ?? fileSubtitle;
     final releaseDate = opf.releaseDate ?? fileReleaseDate;
     final description = opf.description ?? fileDescription;
     final publisher = opf.publisher ?? filePublisher;

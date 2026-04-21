@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
@@ -5,10 +6,18 @@ import 'package:window_manager/window_manager.dart';
 import 'package:audiovault_editor/controllers/library_controller.dart';
 import 'package:audiovault_editor/screens/book_detail_screen.dart';
 import 'package:audiovault_editor/screens/batch_edit_screen.dart';
+import 'package:audiovault_editor/services/preferences_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
+
+  // Restore window bounds
+  final bounds = await PreferencesService.loadWindowBounds();
+  if (bounds != null) {
+    await windowManager.setBounds(bounds);
+  }
+
   runApp(const AudioVaultEditorApp());
 }
 
@@ -35,22 +44,60 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WindowListener {
   final _ctrl = LibraryController();
   final _searchCtrl = TextEditingController();
+  String? _folderLoadError;
 
   @override
   void initState() {
     super.initState();
     _ctrl.addListener(_onControllerChanged);
+    windowManager.addListener(this);
+    _restorePreferences();
   }
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
     _ctrl.removeListener(_onControllerChanged);
     _ctrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowClose() async {
+    final bounds = await windowManager.getBounds();
+    await PreferencesService.saveWindowBounds(bounds);
+  }
+
+  Future<void> _restorePreferences() async {
+    // Restore sort order
+    final sortOrder = await PreferencesService.loadSortOrder();
+    if (sortOrder != null) {
+      _ctrl.setSortOrder(sortOrder);
+    }
+
+    // Restore folder path
+    final folderPath = await PreferencesService.loadFolder();
+    if (folderPath != null) {
+      if (await Directory(folderPath).exists()) {
+        windowManager.setTitle('AudioVault Editor — ${p.basename(folderPath)}');
+        await _ctrl.pickFolder(folderPath);
+      } else {
+        setState(() {
+          _folderLoadError = 'Library folder not found: $folderPath';
+        });
+        await PreferencesService.clearFolder();
+      }
+    }
+  }
+
+  void _dismissError() {
+    setState(() {
+      _folderLoadError = null;
+    });
   }
 
   void _onControllerChanged() => setState(() {});
@@ -68,47 +115,65 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Row(
+      body: Column(
         children: [
-          ExcludeFocus(
-            child: SizedBox(
-              width: 300,
-              child: Column(
-                children: [
-                  _buildToolbar(),
-                  Expanded(child: _buildBookList()),
-                ],
-              ),
+          if (_folderLoadError != null)
+            MaterialBanner(
+              content: Text(_folderLoadError!),
+              actions: [
+                TextButton(
+                  onPressed: _dismissError,
+                  child: const Text('Dismiss'),
+                ),
+              ],
             ),
-          ),
-          const VerticalDivider(width: 1),
           Expanded(
-            child: FocusScope(
-              child: _ctrl.batchPaths.length >= 2
-                  ? BatchEditScreen(
-                      key: ValueKey(_ctrl.batchPaths.join()),
-                      books: _ctrl.books
-                          .where((b) => _ctrl.batchPaths.contains(b.path))
-                          .toList(),
-                      onApplied: _ctrl.onBatchApplied,
-                    )
-                  : _ctrl.selected != null
-                      ? BookDetailScreen(
-                          key: ValueKey(_ctrl.selected!.path),
-                          book: _ctrl.selected!,
-                          onApply: _ctrl.onBookApplied,
-                          onRescan: _ctrl.rescanSelected,
-                          onUndo: _ctrl.undoSnapshot?.path ==
-                                  _ctrl.selected!.path
-                              ? _ctrl.undo
-                              : null,
-                          onDirtyChanged: (dirty) =>
-                              _ctrl.markDirty(_ctrl.selected!.path, dirty: dirty),
-                        )
-                      : const Center(
-                          child: Text('Select a book to view metadata',
-                              style: TextStyle(color: Colors.grey)),
-                        ),
+            child: Row(
+              children: [
+                ExcludeFocus(
+                  child: SizedBox(
+                    width: 300,
+                    child: Column(
+                      children: [
+                        _buildToolbar(),
+                        Expanded(child: _buildBookList()),
+                      ],
+                    ),
+                  ),
+                ),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: FocusScope(
+                    child: _ctrl.batchPaths.length >= 2
+                        ? BatchEditScreen(
+                            key: ValueKey(_ctrl.batchPaths.join()),
+                            books: _ctrl.books
+                                .where((b) => _ctrl.batchPaths.contains(b.path))
+                                .toList(),
+                            onApplied: _ctrl.onBatchApplied,
+                          )
+                        : _ctrl.selected != null
+                            ? BookDetailScreen(
+                                key: ValueKey(_ctrl.selected!.path),
+                                book: _ctrl.selected!,
+                                allBooks: _ctrl.books,
+                                onApply: _ctrl.onBookApplied,
+                                onRescan: _ctrl.rescanSelected,
+                                onUndo: _ctrl.undoSnapshot?.path ==
+                                        _ctrl.selected!.path
+                                    ? _ctrl.undo
+                                    : null,
+                                onDirtyChanged: (dirty) =>
+                                    _ctrl.markDirty(_ctrl.selected!.path, dirty: dirty),
+                                onRenamed: _ctrl.onBookRenamed,
+                              )
+                            : const Center(
+                                child: Text('Select a book to view metadata',
+                                    style: TextStyle(color: Colors.grey)),
+                              ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -182,10 +247,16 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             const SizedBox(height: 4),
-            Text(
-              '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
-              style: const TextStyle(fontSize: 11, color: Colors.grey),
-            ),
+            if (_ctrl.scanning)
+              Text(
+                'Scanning… ${_ctrl.scanFound} book(s) found',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              )
+            else
+              Text(
+                '${_ctrl.filteredBooks.length} of ${_ctrl.books.length} book(s)',
+                style: const TextStyle(fontSize: 11, color: Colors.grey),
+              ),
             if (_ctrl.duplicateCount > 0 || _ctrl.missingCoverCount > 0) ...[
               const SizedBox(height: 6),
               Wrap(
@@ -214,9 +285,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ],
           if (_ctrl.scanning)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: LinearProgressIndicator(
+                value: _ctrl.scanTotal > 0
+                    ? _ctrl.scanFound / _ctrl.scanTotal
+                    : null,
+              ),
             ),
         ],
       ),
@@ -235,15 +310,18 @@ class _HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context, index) {
         final book = books[index];
         final isSelected = _ctrl.selected?.path == book.path;
-        return CheckboxListTile(
-          value: _ctrl.batchPaths.contains(book.path),
-          onChanged: (checked) {
-            _ctrl.toggleBatch(book, selected: checked == true);
-            if (checked != true) _ctrl.selectBook(book);
-          },
+        final isChecked = _ctrl.batchPaths.contains(book.path);
+        return ListTile(
           selected: isSelected,
           selectedTileColor: Colors.white10,
-          controlAffinity: ListTileControlAffinity.leading,
+          dense: true,
+          onTap: () => _ctrl.selectBook(book),
+          leading: Checkbox(
+            value: isChecked,
+            onChanged: (checked) {
+              _ctrl.toggleBatch(book, selected: checked == true);
+            },
+          ),
           title: Row(
             children: [
               if (_ctrl.dirtyPaths.contains(book.path))
@@ -279,7 +357,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ],
           ),
-          dense: true,
         );
       },
     );

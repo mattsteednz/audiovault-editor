@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
 import 'package:audiovault_editor/services/scanner_service.dart';
+import 'package:audiovault_editor/services/preferences_service.dart';
 
 enum SortOrder { titleAsc, titleDesc, authorAsc, authorDesc, seriesAsc, narratorAsc, durationAsc, durationDesc }
 
@@ -18,6 +19,8 @@ class LibraryController extends ChangeNotifier {
   bool _showDuplicatesOnly = false;
   bool _showMissingCoverOnly = false;
   bool _scanning = false;
+  int _scanFound = 0;
+  int _scanTotal = 0;
   String? _folderPath;
   String _searchQuery = '';
   SortOrder _sortOrder = SortOrder.titleAsc;
@@ -36,6 +39,8 @@ class LibraryController extends ChangeNotifier {
   int get missingCoverCount => _missingCoverPaths.length;
   int get duplicateCount => _duplicatePaths.length;
   bool get scanning => _scanning;
+  int get scanFound => _scanFound;
+  int get scanTotal => _scanTotal;
   String? get folderPath => _folderPath;
   String get searchQuery => _searchQuery;
   SortOrder get sortOrder => _sortOrder;
@@ -94,6 +99,7 @@ class LibraryController extends ChangeNotifier {
 
   void setSortOrder(SortOrder order) {
     _sortOrder = order;
+    PreferencesService.saveSortOrder(order);
     notifyListeners();
   }
 
@@ -159,19 +165,32 @@ class LibraryController extends ChangeNotifier {
     _books = [];
     _selected = null;
     _folderPath = folderPath;
+    _scanFound = 0;
+    _scanTotal = 0;
     notifyListeners();
 
-    final books = await _scanner.scanFolder(folderPath, onBookFound: (book) {
-      _books = [..._books, book];
-      notifyListeners();
-    });
+    final books = await _scanner.scanFolder(
+      folderPath,
+      onBookFound: (book) {
+        _books = [..._books, book];
+        notifyListeners();
+      },
+      onProgress: (found, total) {
+        _scanFound = found;
+        _scanTotal = total;
+        notifyListeners();
+      },
+    );
 
     _books = books;
     _scanning = false;
+    _scanFound = 0;
+    _scanTotal = 0;
     _dirtyPaths.clear();
     _batchPaths.clear();
     _searchQuery = '';
     _recomputeFlags();
+    PreferencesService.saveFolder(folderPath);
     notifyListeners();
   }
 
@@ -216,6 +235,52 @@ class LibraryController extends ChangeNotifier {
       _books = [for (final b in _books) b.path == u.path ? u : b];
     }
     _batchPaths.clear();
+    notifyListeners();
+  }
+
+  void onBookRenamed(String oldPath, String newPath) {
+    final book = _books.firstWhere((b) => b.path == oldPath);
+    final updatedBook = Audiobook(
+      title: book.title,
+      author: book.author,
+      duration: book.duration,
+      path: newPath,
+      coverImagePath: book.coverImagePath?.replaceFirst(oldPath, newPath),
+      coverImageBytes: book.coverImageBytes,
+      audioFiles: book.audioFiles.map((f) => f.replaceFirst(oldPath, newPath)).toList(),
+      chapterDurations: book.chapterDurations,
+      chapters: book.chapters,
+      chapterNames: book.chapterNames,
+      narrator: book.narrator,
+      subtitle: book.subtitle,
+      description: book.description,
+      publisher: book.publisher,
+      language: book.language,
+      genre: book.genre,
+      identifier: book.identifier,
+      releaseDate: book.releaseDate,
+      series: book.series,
+      seriesIndex: book.seriesIndex,
+      pendingCoverPath: book.pendingCoverPath,
+      additionalAuthors: book.additionalAuthors,
+      additionalNarrators: book.additionalNarrators,
+      opfMeta: book.opfMeta,
+      hasOpf: book.hasOpf,
+      hasCue: book.hasCue,
+      hasEmbeddedTags: book.hasEmbeddedTags,
+      fileTitleRaw: book.fileTitleRaw,
+      fileAuthorRaw: book.fileAuthorRaw,
+      fileNarratorRaw: book.fileNarratorRaw,
+      fileReleaseDateRaw: book.fileReleaseDateRaw,
+      fileSubtitleRaw: book.fileSubtitleRaw,
+    );
+    _books = [
+      for (final b in _books) b.path == oldPath ? updatedBook : b
+    ];
+    if (_selected?.path == oldPath) {
+      _selected = updatedBook;
+    }
+    _dirtyPaths.remove(oldPath);
     notifyListeners();
   }
 }
