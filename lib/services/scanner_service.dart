@@ -174,6 +174,8 @@ class ScannerService {
         } else if (raw is Mp4Metadata) {
           fileTitle = raw.album?.trim().nullIfEmpty;
           fileAuthor = raw.artist?.trim().nullIfEmpty;
+          // Note: Mp4Metadata does not expose composer (©wrt) atom.
+          // Narrator for M4B files is read from OPF when present.
           fileReleaseDate = raw.year?.year != null ? raw.year!.year.toString() : null;
           fileGenre = raw.genre?.trim().nullIfEmpty;
         } else if (raw is VorbisMetadata) {
