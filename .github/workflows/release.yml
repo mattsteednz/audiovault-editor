@@ -51,7 +51,14 @@ jobs:
 
             ### Installation
             1. Download and extract `audiovault-editor-${{ github.ref_name }}-windows.zip`
-            2. Run `audiovault_editor.exe`
+            2. **Install Visual C++ Redistributable** if not already installed:
+               - Download from: https://aka.ms/vs/17/release/vc_redist.x64.exe
+               - Run the installer
+            3. Run `audiovault_editor.exe`
+
+            ### System Requirements
+            - Windows 10 or later
+            - Microsoft Visual C++ Redistributable 2015-2022
 
             See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what's new.
           files: ${{ env.ZIP_NAME }}
