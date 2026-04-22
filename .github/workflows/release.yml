@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.7'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --fatal-infos
+
+      - name: Run tests
+        run: flutter test --reporter=expanded
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Package build output
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $outDir = "build\windows\x64\runner\Release"
+          $zipName = "audiovault-editor-$version-windows.zip"
+          Compress-Archive -Path "$outDir\*" -DestinationPath $zipName
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: AudioVault Editor ${{ github.ref_name }}
+          body: |
+            ## AudioVault Editor ${{ github.ref_name }}
+
+            ### Installation
+            1. Download and extract `audiovault-editor-${{ github.ref_name }}-windows.zip`
+            2. Run `audiovault_editor.exe`
+
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for what's new.
+          files: ${{ env.ZIP_NAME }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
