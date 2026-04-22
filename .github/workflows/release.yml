@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     name: Build Windows Release
@@ -64,5 +67,3 @@ jobs:
           files: ${{ env.ZIP_NAME }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
