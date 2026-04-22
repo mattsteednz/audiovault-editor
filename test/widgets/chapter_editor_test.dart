@@ -11,7 +11,7 @@ void main() {
   group('Property 1: Population round-trip for single-file books', () {
     test('single chapter preserves title and start', () {
       final chapters = [
-        ChapterEntry(title: 'Intro', start: Duration.zero),
+        const ChapterEntry(title: 'Intro', start: Duration.zero),
       ];
       final ctrl = ChapterEditorController(entries: List.of(chapters));
       expect(ctrl.entries.length, equals(1));
@@ -21,9 +21,9 @@ void main() {
 
     test('multiple chapters preserve all titles and starts', () {
       final chapters = [
-        ChapterEntry(title: 'Chapter 1', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 2', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'Chapter 3', start: Duration(minutes: 12, seconds: 30)),
+        const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
+        const ChapterEntry(title: 'Chapter 2', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Chapter 3', start: Duration(minutes: 12, seconds: 30)),
       ];
       final ctrl = ChapterEditorController(entries: List.of(chapters));
       expect(ctrl.entries.length, equals(3));
@@ -35,8 +35,8 @@ void main() {
 
     test('empty title is preserved', () {
       final chapters = [
-        ChapterEntry(title: '', start: Duration.zero),
-        ChapterEntry(title: 'Named', start: Duration(seconds: 60)),
+        const ChapterEntry(title: '', start: Duration.zero),
+        const ChapterEntry(title: 'Named', start: Duration(seconds: 60)),
       ];
       final ctrl = ChapterEditorController(entries: List.of(chapters));
       expect(ctrl.entries[0].title, equals(''));
@@ -80,7 +80,7 @@ void main() {
 
     test('single audio file produces one entry', () {
       final entries = [
-        ChapterEntry(title: 'Only File', start: Duration.zero),
+        const ChapterEntry(title: 'Only File', start: Duration.zero),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       expect(ctrl.entries.length, equals(1));
@@ -95,33 +95,33 @@ void main() {
   group('Property 3: Derived duration correctness', () {
     test('derived duration between entries equals start difference', () {
       final entries = [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 12)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 12)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
-      final bookDuration = Duration(minutes: 20);
+      const bookDuration = Duration(minutes: 20);
 
-      expect(ctrl.derivedDuration(0, bookDuration), equals(Duration(minutes: 5)));
-      expect(ctrl.derivedDuration(1, bookDuration), equals(Duration(minutes: 7)));
-      expect(ctrl.derivedDuration(2, bookDuration), equals(Duration(minutes: 8)));
+      expect(ctrl.derivedDuration(0, bookDuration), equals(const Duration(minutes: 5)));
+      expect(ctrl.derivedDuration(1, bookDuration), equals(const Duration(minutes: 7)));
+      expect(ctrl.derivedDuration(2, bookDuration), equals(const Duration(minutes: 8)));
     });
 
     test('last entry derived duration uses bookDuration', () {
       final entries = [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
-      final bookDuration = Duration(minutes: 30);
+      const bookDuration = Duration(minutes: 30);
 
-      expect(ctrl.derivedDuration(1, bookDuration), equals(Duration(minutes: 20)));
+      expect(ctrl.derivedDuration(1, bookDuration), equals(const Duration(minutes: 20)));
     });
 
     test('last entry derived duration is null when bookDuration is null', () {
       final entries = [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
 
@@ -130,12 +130,12 @@ void main() {
 
     test('single entry derived duration uses bookDuration', () {
       final entries = [
-        ChapterEntry(title: 'Only', start: Duration.zero),
+        const ChapterEntry(title: 'Only', start: Duration.zero),
       ];
       final ctrl = ChapterEditorController(entries: entries);
-      final bookDuration = Duration(hours: 1);
+      const bookDuration = Duration(hours: 1);
 
-      expect(ctrl.derivedDuration(0, bookDuration), equals(Duration(hours: 1)));
+      expect(ctrl.derivedDuration(0, bookDuration), equals(const Duration(hours: 1)));
     });
 
     test('derived duration for all indices with multiple entries', () {
@@ -143,7 +143,7 @@ void main() {
       final entries = starts
           .map((s) => ChapterEntry(title: 'Ch', start: Duration(seconds: s)))
           .toList();
-      final bookDuration = Duration(seconds: 2400);
+      const bookDuration = Duration(seconds: 2400);
       final ctrl = ChapterEditorController(entries: entries);
 
       for (int i = 0; i < entries.length - 1; i++) {
@@ -164,16 +164,16 @@ void main() {
   group('Property 4: First chapter start is always zero', () {
     test('updateStart(0, ...) clamps to Duration.zero', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
       ]);
-      ctrl.updateStart(0, Duration(minutes: 3));
+      ctrl.updateStart(0, const Duration(minutes: 3));
       expect(ctrl.entries[0].start, equals(Duration.zero));
     });
 
     test('updateStart(0, Duration.zero) keeps Duration.zero', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       ctrl.updateStart(0, Duration.zero);
       expect(ctrl.entries[0].start, equals(Duration.zero));
@@ -181,20 +181,20 @@ void main() {
 
     test('updateStart(0, large duration) still clamps to zero', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(hours: 2)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(hours: 2)),
       ]);
-      ctrl.updateStart(0, Duration(hours: 1, minutes: 30));
+      ctrl.updateStart(0, const Duration(hours: 1, minutes: 30));
       expect(ctrl.entries[0].start, equals(Duration.zero));
     });
 
     test('updateStart on non-zero index is not clamped', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
       ]);
-      ctrl.updateStart(1, Duration(minutes: 10));
-      expect(ctrl.entries[1].start, equals(Duration(minutes: 10)));
+      ctrl.updateStart(1, const Duration(minutes: 10));
+      expect(ctrl.entries[1].start, equals(const Duration(minutes: 10)));
     });
   });
 
@@ -206,18 +206,18 @@ void main() {
     test('formatTimestamp then parseTimestamp round-trips', () {
       final durations = [
         Duration.zero,
-        Duration(seconds: 30),
-        Duration(minutes: 5, seconds: 30),
-        Duration(hours: 1, minutes: 5, seconds: 30),
-        Duration(hours: 10, minutes: 59, seconds: 59),
-        Duration(hours: 99, minutes: 59, seconds: 59),
+        const Duration(seconds: 30),
+        const Duration(minutes: 5, seconds: 30),
+        const Duration(hours: 1, minutes: 5, seconds: 30),
+        const Duration(hours: 10, minutes: 59, seconds: 59),
+        const Duration(hours: 99, minutes: 59, seconds: 59),
       ];
       for (final d in durations) {
         final formatted = ChapterEditorController.formatTimestamp(d);
         final parsed = ChapterEditorController.parseTimestamp(formatted);
         expect(parsed, isNotNull, reason: 'Failed to parse: ');
         expect(parsed!.inSeconds, equals(d.inSeconds),
-            reason: 'Round-trip failed for \ -> \ -> ');
+            reason: 'Round-trip failed for  ->  -> ');
       }
     });
 
@@ -241,24 +241,24 @@ void main() {
 
     test('MM:SS format parses correctly', () {
       expect(ChapterEditorController.parseTimestamp('5:30'),
-          equals(Duration(minutes: 5, seconds: 30)));
+          equals(const Duration(minutes: 5, seconds: 30)));
       expect(ChapterEditorController.parseTimestamp('0:00'), equals(Duration.zero));
       expect(ChapterEditorController.parseTimestamp('99:59'),
-          equals(Duration(minutes: 99, seconds: 59)));
+          equals(const Duration(minutes: 99, seconds: 59)));
     });
 
     test('MMM:SS format (minutes > 99) parses correctly', () {
       expect(ChapterEditorController.parseTimestamp('125:30'),
-          equals(Duration(minutes: 125, seconds: 30)));
+          equals(const Duration(minutes: 125, seconds: 30)));
       expect(ChapterEditorController.parseTimestamp('100:00'),
-          equals(Duration(minutes: 100)));
+          equals(const Duration(minutes: 100)));
     });
 
     test('HH:MM:SS format parses correctly', () {
       expect(ChapterEditorController.parseTimestamp('1:05:30'),
-          equals(Duration(hours: 1, minutes: 5, seconds: 30)));
+          equals(const Duration(hours: 1, minutes: 5, seconds: 30)));
       expect(ChapterEditorController.parseTimestamp('01:05:30'),
-          equals(Duration(hours: 1, minutes: 5, seconds: 30)));
+          equals(const Duration(hours: 1, minutes: 5, seconds: 30)));
       expect(ChapterEditorController.parseTimestamp('00:00:00'), equals(Duration.zero));
     });
 
@@ -273,14 +273,14 @@ void main() {
       expect(ChapterEditorController.parseTimestamp('5:60'), isNull);
       expect(ChapterEditorController.parseTimestamp('1:00:60'), isNull);
       // 60:00 is valid: 60 minutes, 0 seconds
-      expect(ChapterEditorController.parseTimestamp('60:00'), equals(Duration(minutes: 60)));
+      expect(ChapterEditorController.parseTimestamp('60:00'), equals(const Duration(minutes: 60)));
     });
 
     test('formatTimestamp always produces HH:MM:SS', () {
       expect(ChapterEditorController.formatTimestamp(Duration.zero), equals('00:00:00'));
-      expect(ChapterEditorController.formatTimestamp(Duration(hours: 1, minutes: 5, seconds: 30)),
+      expect(ChapterEditorController.formatTimestamp(const Duration(hours: 1, minutes: 5, seconds: 30)),
           equals('01:05:30'));
-      expect(ChapterEditorController.formatTimestamp(Duration(minutes: 5, seconds: 30)),
+      expect(ChapterEditorController.formatTimestamp(const Duration(minutes: 5, seconds: 30)),
           equals('00:05:30'));
     });
   });
@@ -292,34 +292,34 @@ void main() {
   group('Property 6: Conflict detection', () {
     test('no conflicts when starts are strictly ascending', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ]);
       expect(ctrl.hasConflicts, isFalse);
     });
 
     test('conflict when two entries have same start', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 5)),
       ]);
       expect(ctrl.hasConflicts, isTrue);
     });
 
     test('conflict when entry start is greater than next', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 5)),
       ]);
       expect(ctrl.hasConflicts, isTrue);
     });
 
     test('single entry has no conflicts', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       expect(ctrl.hasConflicts, isFalse);
     });
@@ -344,7 +344,7 @@ void main() {
             .toList();
         final ctrl = ChapterEditorController(entries: entries);
         expect(ctrl.hasConflicts, equals(expected[c]),
-            reason: 'Config \ should have conflicts=');
+            reason: 'Config  should have conflicts=');
       }
     });
   });
@@ -356,13 +356,13 @@ void main() {
   group('Property 7: addChapter places new row at correct start', () {
     test('addChapter appends at last start + derived duration', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
-      final bookDuration = Duration(minutes: 30);
+      const bookDuration = Duration(minutes: 30);
       ctrl.addChapter(bookDuration);
       expect(ctrl.entries.length, equals(3));
-      expect(ctrl.entries[2].start, equals(Duration(minutes: 30)));
+      expect(ctrl.entries[2].start, equals(const Duration(minutes: 30)));
     });
 
     test('addChapter on empty list creates entry at Duration.zero', () {
@@ -374,19 +374,19 @@ void main() {
 
     test('addChapter with null bookDuration uses last start when no next entry', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
       ctrl.addChapter(null);
       expect(ctrl.entries.length, equals(3));
-      expect(ctrl.entries[2].start, equals(Duration(minutes: 10)));
+      expect(ctrl.entries[2].start, equals(const Duration(minutes: 10)));
     });
 
     test('addChapter new entry has empty title', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       expect(ctrl.entries.last.title, equals(''));
     });
   });
@@ -398,38 +398,38 @@ void main() {
   group('Property 8: insertChapter places new row at midpoint', () {
     test('inserted entry start is midpoint of surrounding entries', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
       ctrl.insertChapter(0);
       expect(ctrl.entries.length, equals(3));
-      expect(ctrl.entries[1].start, equals(Duration(minutes: 5)));
+      expect(ctrl.entries[1].start, equals(const Duration(minutes: 5)));
     });
 
     test('midpoint uses integer division of microseconds', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration(microseconds: 0)),
-        ChapterEntry(title: 'B', start: Duration(microseconds: 11)),
+        const ChapterEntry(title: 'A', start: Duration()),
+        const ChapterEntry(title: 'B', start: Duration(microseconds: 11)),
       ]);
       ctrl.insertChapter(0);
-      expect(ctrl.entries[1].start, equals(Duration(microseconds: 5)));
+      expect(ctrl.entries[1].start, equals(const Duration(microseconds: 5)));
     });
 
     test('insertChapter between second and third entries', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 20)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 20)),
       ]);
       ctrl.insertChapter(1);
       expect(ctrl.entries.length, equals(4));
-      expect(ctrl.entries[2].start, equals(Duration(minutes: 15)));
+      expect(ctrl.entries[2].start, equals(const Duration(minutes: 15)));
     });
 
     test('inserted entry has empty title', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
       ctrl.insertChapter(0);
       expect(ctrl.entries[1].title, equals(''));
@@ -443,9 +443,9 @@ void main() {
   group('Property 9: Sequential indices after mutations', () {
     test('indices are 0..n-1 after add', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       for (int i = 0; i < ctrl.entries.length; i++) {
         expect(ctrl.entries[i], isNotNull);
       }
@@ -454,8 +454,8 @@ void main() {
 
     test('indices are 0..n-1 after insert', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
       ctrl.insertChapter(0);
       expect(ctrl.entries.length, equals(3));
@@ -466,9 +466,9 @@ void main() {
 
     test('indices are 0..n-1 after delete', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ]);
       ctrl.deleteChapter(1);
       expect(ctrl.entries.length, equals(2));
@@ -479,11 +479,11 @@ void main() {
 
     test('indices sequential after multiple mutations', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 20)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 20)),
       ]);
-      ctrl.addChapter(Duration(minutes: 40));
+      ctrl.addChapter(const Duration(minutes: 40));
       ctrl.insertChapter(1);
       ctrl.deleteChapter(2);
       expect(ctrl.entries.length, equals(4));
@@ -500,9 +500,9 @@ void main() {
   group('Property 10: deleteChapter reduces count by 1', () {
     test('delete middle entry reduces count and preserves order', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ]);
       ctrl.deleteChapter(1);
       expect(ctrl.entries.length, equals(2));
@@ -512,9 +512,9 @@ void main() {
 
     test('delete first entry reduces count and preserves order', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ]);
       ctrl.deleteChapter(0);
       expect(ctrl.entries.length, equals(2));
@@ -524,9 +524,9 @@ void main() {
 
     test('delete last entry reduces count and preserves order', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ]);
       ctrl.deleteChapter(2);
       expect(ctrl.entries.length, equals(2));
@@ -536,7 +536,7 @@ void main() {
 
     test('deleteChapter on single-entry list is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'Only', start: Duration.zero),
+        const ChapterEntry(title: 'Only', start: Duration.zero),
       ]);
       ctrl.deleteChapter(0);
       expect(ctrl.entries.length, equals(1));
@@ -551,9 +551,9 @@ void main() {
   group('Property 11: Quick Edit serialisation round-trip', () {
     test('round-trip with timestamps preserves titles and starts', () {
       final entries = [
-        ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
-        ChapterEntry(title: 'Chapter 2', start: Duration(minutes: 12, seconds: 30)),
+        const ChapterEntry(title: 'Intro', start: Duration.zero),
+        const ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Chapter 2', start: Duration(minutes: 12, seconds: 30)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       final text = ctrl.toQuickEditText(true);
@@ -568,8 +568,8 @@ void main() {
 
     test('round-trip without timestamps preserves titles', () {
       final entries = [
-        ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Intro', start: Duration.zero),
+        const ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       final text = ctrl.toQuickEditText(false);
@@ -596,19 +596,19 @@ void main() {
   group('Property 12: Quick Edit rightmost-comma parsing', () {
     test('title with comma survives round-trip', () {
       final entries = [
-        ChapterEntry(title: 'Hello, World', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Hello, World', start: Duration(minutes: 5)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       final text = ctrl.toQuickEditText(true);
       final result = ChapterEditorController.parseQuickEditText(text, true);
       expect(result.errorLines, isEmpty);
       expect(result.entries[0].title, equals('Hello, World'));
-      expect(result.entries[0].start.inSeconds, equals(Duration(minutes: 5).inSeconds));
+      expect(result.entries[0].start.inSeconds, equals(const Duration(minutes: 5).inSeconds));
     });
 
     test('title with multiple commas survives round-trip', () {
       final entries = [
-        ChapterEntry(title: 'One, Two, Three', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'One, Two, Three', start: Duration(minutes: 10)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       final text = ctrl.toQuickEditText(true);
@@ -622,7 +622,7 @@ void main() {
       final result = ChapterEditorController.parseQuickEditText(line, true);
       expect(result.errorLines, isEmpty);
       expect(result.entries[0].title, equals('Title, with comma'));
-      expect(result.entries[0].start, equals(Duration(minutes: 5)));
+      expect(result.entries[0].start, equals(const Duration(minutes: 5)));
     });
 
     test('quoted title without comma also works', () {
@@ -682,9 +682,9 @@ void main() {
   group('Property 16: Undo/redo stack discipline', () {
     test('undo after one mutation restores previous state', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       expect(ctrl.entries.length, equals(2));
       ctrl.undo();
       expect(ctrl.entries.length, equals(1));
@@ -693,9 +693,9 @@ void main() {
 
     test('redo after undo restores post-mutation state', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       ctrl.undo();
       ctrl.redo();
       expect(ctrl.entries.length, equals(2));
@@ -703,14 +703,14 @@ void main() {
 
     test('k undos after k mutations restores pre-mutation state', () {
       final initial = [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ];
       final ctrl = ChapterEditorController(entries: List.of(initial));
 
       ctrl.updateTitle(0, 'A modified');
       ctrl.updateTitle(1, 'B modified');
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
 
       ctrl.undo();
       ctrl.undo();
@@ -723,10 +723,10 @@ void main() {
 
     test('k redos after k undos restores post-mutation state', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       ctrl.updateTitle(0, 'Modified');
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
 
       ctrl.undo();
       ctrl.undo();
@@ -740,7 +740,7 @@ void main() {
 
     test('undo when stack is empty is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       expect(ctrl.canUndo, isFalse);
       ctrl.undo();
@@ -749,7 +749,7 @@ void main() {
 
     test('redo when stack is empty is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       expect(ctrl.canRedo, isFalse);
       ctrl.redo();
@@ -758,9 +758,9 @@ void main() {
 
     test('mutation after undo clears redo stack', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       ctrl.undo();
       expect(ctrl.canRedo, isTrue);
       ctrl.updateTitle(0, 'Changed');
@@ -769,12 +769,12 @@ void main() {
 
     test('canUndo and canRedo reflect stack state', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       expect(ctrl.canUndo, isFalse);
       expect(ctrl.canRedo, isFalse);
 
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       expect(ctrl.canUndo, isTrue);
       expect(ctrl.canRedo, isFalse);
 
@@ -789,9 +789,9 @@ void main() {
 
     test('clearHistory empties both stacks', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
-      ctrl.addChapter(Duration(hours: 1));
+      ctrl.addChapter(const Duration(hours: 1));
       ctrl.undo();
       expect(ctrl.canUndo, isFalse);
       expect(ctrl.canRedo, isTrue);
@@ -807,7 +807,7 @@ void main() {
   group('Edge cases', () {
     test('deleteChapter on single-entry list is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'Only', start: Duration.zero),
+        const ChapterEntry(title: 'Only', start: Duration.zero),
       ]);
       ctrl.deleteChapter(0);
       expect(ctrl.entries.length, equals(1));
@@ -816,7 +816,7 @@ void main() {
 
     test('undo when stack is empty is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       ctrl.undo();
       expect(ctrl.entries.length, equals(1));
@@ -824,7 +824,7 @@ void main() {
 
     test('redo when stack is empty is a no-op', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'A', start: Duration.zero),
       ]);
       ctrl.redo();
       expect(ctrl.entries.length, equals(1));
@@ -835,37 +835,37 @@ void main() {
     });
 
     test('parseTimestamp("60:00") returns Duration(minutes: 60) - 60 min 0 sec is valid', () {
-      expect(ChapterEditorController.parseTimestamp('60:00'), equals(Duration(minutes: 60)));
+      expect(ChapterEditorController.parseTimestamp('60:00'), equals(const Duration(minutes: 60)));
     });
 
     test('parseTimestamp("5:30") returns Duration(minutes: 5, seconds: 30)', () {
       expect(
         ChapterEditorController.parseTimestamp('5:30'),
-        equals(Duration(minutes: 5, seconds: 30)),
+        equals(const Duration(minutes: 5, seconds: 30)),
       );
     });
 
     test('parseTimestamp("125:30") returns Duration(minutes: 125, seconds: 30)', () {
       expect(
         ChapterEditorController.parseTimestamp('125:30'),
-        equals(Duration(minutes: 125, seconds: 30)),
+        equals(const Duration(minutes: 125, seconds: 30)),
       );
     });
 
     test('parseTimestamp("1:05:30") returns Duration(hours: 1, minutes: 5, seconds: 30)', () {
       expect(
         ChapterEditorController.parseTimestamp('1:05:30'),
-        equals(Duration(hours: 1, minutes: 5, seconds: 30)),
+        equals(const Duration(hours: 1, minutes: 5, seconds: 30)),
       );
     });
 
     test('replaceAll replaces entire list', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'Old', start: Duration.zero),
+        const ChapterEntry(title: 'Old', start: Duration.zero),
       ]);
       final newEntries = [
-        ChapterEntry(title: 'New 1', start: Duration.zero),
-        ChapterEntry(title: 'New 2', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'New 1', start: Duration.zero),
+        const ChapterEntry(title: 'New 2', start: Duration(minutes: 5)),
       ];
       ctrl.replaceAll(newEntries);
       expect(ctrl.entries.length, equals(2));
@@ -879,15 +879,15 @@ void main() {
       expect(copy.title, equals('Modified'));
       expect(copy.start, equals(Duration.zero));
 
-      final copy2 = entry.copyWith(start: Duration(minutes: 5));
+      final copy2 = entry.copyWith(start: const Duration(minutes: 5));
       expect(copy2.title, equals('Original'));
-      expect(copy2.start, equals(Duration(minutes: 5)));
+      expect(copy2.start, equals(const Duration(minutes: 5)));
     });
 
     test('undo stack is capped at 100', () {
       final ctrl = ChapterEditorController(entries: [
-        ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: Duration(minutes: 10)),
+        const ChapterEntry(title: 'A', start: Duration.zero),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 10)),
       ]);
       for (int i = 0; i < 110; i++) {
         ctrl.updateTitle(0, 'Title $i');
@@ -928,7 +928,7 @@ void main() {
 
   /// Helper: builds a minimal multi-file Audiobook.
   Audiobook makeMultiFileBook() {
-    return Audiobook(
+    return const Audiobook(
       path: '/books/test',
       audioFiles: [
         '/books/test/part1.mp3',
@@ -936,8 +936,8 @@ void main() {
       ],
       chapterNames: ['Part 1', 'Part 2'],
       chapterDurations: [
-        const Duration(minutes: 30),
-        const Duration(minutes: 30),
+        Duration(minutes: 30),
+        Duration(minutes: 30),
       ],
     );
   }
@@ -1513,7 +1513,7 @@ void main() {
       final ctrl = ChapterEditorController(entries: [
         const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
         const ChapterEntry(title: '', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 3', start: const Duration(minutes: 10)),
+        const ChapterEntry(title: 'Chapter 3', start: Duration(minutes: 10)),
       ]);
       final text = ctrl.toQuickEditText(true);
       final lines = text.split('\n');
@@ -1537,8 +1537,8 @@ void main() {
       final entries = [
         const ChapterEntry(title: 'Intro', start: Duration.zero),
         const ChapterEntry(title: '', start: Duration.zero), // placeholder
-        ChapterEntry(
-            title: 'Chapter 2', start: const Duration(minutes: 10)),
+        const ChapterEntry(
+            title: 'Chapter 2', start: Duration(minutes: 10)),
       ];
       final ctrl = ChapterEditorController(entries: entries);
       final text = ctrl.toQuickEditText(true);
@@ -1570,8 +1570,8 @@ void main() {
     test('first entry as placeholder: toQuickEditText starts with blank line', () {
       final ctrl = ChapterEditorController(entries: [
         const ChapterEntry(title: '', start: Duration.zero), // placeholder first
-        ChapterEntry(
-            title: 'Chapter 2', start: const Duration(minutes: 5)),
+        const ChapterEntry(
+            title: 'Chapter 2', start: Duration(minutes: 5)),
       ]);
       final text = ctrl.toQuickEditText(true);
       expect(text.startsWith('\n'), isTrue);
@@ -1585,8 +1585,8 @@ void main() {
     test('returns false for fully populated list', () {
       final ctrl = ChapterEditorController(entries: [
         const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
-        ChapterEntry(
-            title: 'Chapter 2', start: const Duration(minutes: 5)),
+        const ChapterEntry(
+            title: 'Chapter 2', start: Duration(minutes: 5)),
       ]);
       expect(ctrl.hasIncompleteEntries(), isFalse);
       expect(ctrl.hasIncompleteEntries(requireTimestamps: true), isFalse);
@@ -1598,7 +1598,7 @@ void main() {
         const ChapterEntry(title: '', start: Duration.zero),
       ]);
       expect(ctrl.hasIncompleteEntries(), isTrue);
-      expect(ctrl.hasIncompleteEntries(requireTimestamps: false), isTrue);
+      expect(ctrl.hasIncompleteEntries(), isTrue);
     });
 
     test('returns true when title is whitespace-only', () {
@@ -1613,15 +1613,15 @@ void main() {
         const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
         const ChapterEntry(title: 'Chapter 2', start: Duration.zero),
       ]);
-      expect(ctrl.hasIncompleteEntries(requireTimestamps: false), isFalse);
+      expect(ctrl.hasIncompleteEntries(), isFalse);
       expect(ctrl.hasIncompleteEntries(requireTimestamps: true), isTrue);
     });
 
     test('requireTimestamps: first entry zero start is not an error', () {
       final ctrl = ChapterEditorController(entries: [
         const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
-        ChapterEntry(
-            title: 'Chapter 2', start: const Duration(minutes: 5)),
+        const ChapterEntry(
+            title: 'Chapter 2', start: Duration(minutes: 5)),
       ]);
       expect(ctrl.hasIncompleteEntries(requireTimestamps: true), isFalse);
     });

@@ -99,7 +99,7 @@ void main() {
 
     test('Duration(milliseconds: 0) → 00:00:00', () {
       expect(
-        CueWriter.formatCueTime(const Duration(milliseconds: 0)),
+        CueWriter.formatCueTime(const Duration()),
         equals('00:00:00'),
       );
     });
@@ -121,7 +121,7 @@ void main() {
     test('generate produces exactly one FILE directive', () {
       final chapters = [
         const ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 1', start: const Duration(minutes: 5)),
+        const ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
       ];
       final result = CueWriter.generate('book.mp3', 'My Book', chapters);
       final fileMatches = RegExp(r'^FILE ', multiLine: true).allMatches(result);
@@ -131,8 +131,8 @@ void main() {
     test('generate produces N TRACK blocks for N chapters', () {
       final chapters = [
         const ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: const Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: const Duration(minutes: 10)),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ];
       final result = CueWriter.generate('book.mp3', 'My Book', chapters);
       final trackMatches =
@@ -143,8 +143,8 @@ void main() {
     test('generate produces N INDEX 01 lines for N chapters', () {
       final chapters = [
         const ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: const Duration(minutes: 5)),
-        ChapterEntry(title: 'C', start: const Duration(minutes: 10)),
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'C', start: Duration(minutes: 10)),
       ];
       final result = CueWriter.generate('book.mp3', 'My Book', chapters);
       final indexMatches =
@@ -170,10 +170,10 @@ void main() {
     test('each INDEX 01 line contains a valid MM:SS:FF timestamp', () {
       final chapters = [
         const ChapterEntry(title: 'A', start: Duration.zero),
-        ChapterEntry(title: 'B', start: const Duration(minutes: 5, seconds: 30)),
-        ChapterEntry(
+        const ChapterEntry(title: 'B', start: Duration(minutes: 5, seconds: 30)),
+        const ChapterEntry(
             title: 'C',
-            start: const Duration(
+            start: Duration(
                 minutes: 1, seconds: 23, milliseconds: 456)),
       ];
       final result = CueWriter.generate('book.mp3', 'My Book', chapters);
@@ -216,8 +216,8 @@ void main() {
     test('generate with 3 chapters produces correct structure', () {
       final chapters = [
         const ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Part 1', start: const Duration(minutes: 5)),
-        ChapterEntry(title: 'Part 2', start: const Duration(minutes: 12, seconds: 30)),
+        const ChapterEntry(title: 'Part 1', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Part 2', start: Duration(minutes: 12, seconds: 30)),
       ];
       final result = CueWriter.generate('audiobook.mp3', 'My Audiobook', chapters);
 
@@ -288,7 +288,7 @@ void main() {
     test('write creates file at bookPath/<bookTitle>.cue', () async {
       final chapters = [
         const ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 1', start: const Duration(minutes: 5)),
+        const ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
       ];
       await CueWriter.write(tempDir.path, 'My Book', 'book.mp3', chapters);
 
@@ -310,8 +310,8 @@ void main() {
     test('write file content contains correct number of TRACK blocks', () async {
       final chapters = [
         const ChapterEntry(title: 'Intro', start: Duration.zero),
-        ChapterEntry(title: 'Chapter 1', start: const Duration(minutes: 5)),
-        ChapterEntry(title: 'Chapter 2', start: const Duration(minutes: 10)),
+        const ChapterEntry(title: 'Chapter 1', start: Duration(minutes: 5)),
+        const ChapterEntry(title: 'Chapter 2', start: Duration(minutes: 10)),
       ];
       await CueWriter.write(tempDir.path, 'My Book', 'book.mp3', chapters);
 
