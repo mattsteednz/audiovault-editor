@@ -15,7 +15,8 @@ class Mp3Writer {
       if (book.subtitle != null) _buildTextField('TIT3', book.subtitle!),
       if (book.author != null) _buildTextField('TPE1', book.author!),
       if (book.narrator != null) _buildTextField('TPE2', book.narrator!),
-      if (book.releaseDate != null) _buildTextField('TYER', book.releaseDate!),
+      if (book.releaseDate != null)
+        _buildTextField('TYER', _yearOnly(book.releaseDate!)),
       if (book.description != null) _buildCommFrame(book.description!),
       if (book.publisher != null) _buildTextField('TPUB', book.publisher!),
       if (book.language != null) _buildTextField('TLAN', book.language!),
@@ -39,6 +40,23 @@ class Mp3Writer {
   }
 
   // ── Frame builders ────────────────────────────────────────────────────────
+
+  /// Extracts a 4-digit year from a date string.
+  /// Accepts bare years ("2026"), ISO dates ("2026-04-21"),
+  /// and locale short dates ("21-04-2026" or "21/04/2026").
+  /// Falls back to the original string if no year can be parsed.
+  static String _yearOnly(String date) {
+    final trimmed = date.trim();
+    // Already a bare year
+    if (RegExp(r'^\d{4}$').hasMatch(trimmed)) return trimmed;
+    // ISO / YYYY-first: 2026-04-21 or 2026/04/21
+    final isoMatch = RegExp(r'^(\d{4})[-/]').firstMatch(trimmed);
+    if (isoMatch != null) return isoMatch.group(1)!;
+    // Day-first: DD-MM-YYYY or DD/MM/YYYY
+    final dmyMatch = RegExp(r'^\d{1,2}[-/]\d{1,2}[-/](\d{4})$').firstMatch(trimmed);
+    if (dmyMatch != null) return dmyMatch.group(1)!;
+    return trimmed;
+  }
 
   static Uint8List _buildApicFrame(Uint8List jpeg) {
     const mime = 'image/jpeg';
