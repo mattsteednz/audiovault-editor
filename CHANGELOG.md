@@ -1,6 +1,11 @@
 # Changelog
 
-## [1.2.0] - TBD
+## [1.2.1] - 2026-04-22
+
+### Fixed
+- Release automation improvements
+
+## [1.2.0] - 2026-04-22
 
 ### Added
 - **Editable chapter table** — Chapters tab is now fully interactive for single-file M4B and MP3 books
