@@ -109,7 +109,6 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
 
   // ── Dialog state ───────────────────────────────────────────────────────────
   _DialogState _state = _DialogState.params;
-  double? _progress; // null = indeterminate
   String? _retryMessage;
   bool _showExcessWarning = false;
 
@@ -177,7 +176,6 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
 
     setState(() {
       _state = _DialogState.detecting;
-      _progress = null;
       _retryMessage = attempt > 0
           ? 'Adjusting parameters and retrying (attempt ${attempt + 1}/5)…'
           : null;
@@ -215,8 +213,9 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
     if (!mounted) return;
 
     switch (event) {
-      case SilenceDetectionProgressUpdate(:final fraction):
-        setState(() => _progress = fraction);
+      case SilenceDetectionProgressUpdate():
+        // Progress percentage not available — spinner handles feedback
+        break;
 
       case SilenceDetectionComplete(:final boundaries):
         // Build chapter entries: Chapter 1 at 00:00:00, then one per boundary
@@ -477,22 +476,12 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
         Text('Detecting chapters…', style: theme.textTheme.titleLarge),
         const SizedBox(height: 20),
 
-        // Progress bar
-        if (_progress != null) ...[
-          LinearProgressIndicator(value: _progress),
-          const SizedBox(height: 8),
-          Text(
-            '${(_progress! * 100).round()}%',
-            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
-          ),
-        ] else ...[
-          const LinearProgressIndicator(),
-          const SizedBox(height: 8),
-          Text(
-            'Scanning audio…',
-            style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
-          ),
-        ],
+        const LinearProgressIndicator(),
+        const SizedBox(height: 8),
+        Text(
+          'Scanning audio…',
+          style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+        ),
 
         // Retry message
         if (_retryMessage != null) ...[

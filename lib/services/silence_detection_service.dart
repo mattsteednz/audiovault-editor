@@ -116,34 +116,15 @@ class SilenceDetectionService {
       ]);
 
       final boundaries = <Duration>[];
-      final totalMicros = totalDuration?.inMicroseconds;
 
-      // Collect stderr lines and yield progress events
+      // Collect stderr and parse silence boundaries
       final stderrCompleter = Completer<void>();
-      final progressEvents = <SilenceDetectionProgress>[];
 
       process.stderr
           .transform(const SystemEncoding().decoder)
           .transform(const LineSplitter())
           .listen(
         (line) {
-          // Progress: "size=    0kB time=00:14:32.10 bitrate=..."
-          final timeMatch =
-              RegExp(r'time=(\d+):(\d+):(\d+\.\d+)').firstMatch(line);
-          if (timeMatch != null) {
-            if (totalMicros != null && totalMicros > 0) {
-              final h = int.parse(timeMatch.group(1)!);
-              final m = int.parse(timeMatch.group(2)!);
-              final s = double.parse(timeMatch.group(3)!);
-              final currentMicros = ((h * 3600 + m * 60 + s) * 1e6).round();
-              final fraction =
-                  (currentMicros / totalMicros).clamp(0.0, 1.0);
-              progressEvents.add(SilenceDetectionProgressUpdate(fraction));
-            } else {
-              progressEvents.add(SilenceDetectionProgressUpdate(null));
-            }
-          }
-
           // Silence boundary: "[silencedetect @ ...] silence_end: 874.123 | ..."
           final silenceMatch =
               RegExp(r'silence_end:\s*([\d.]+)').firstMatch(line);
@@ -159,17 +140,9 @@ class SilenceDetectionService {
         cancelOnError: false,
       );
 
-      // Yield progress events as they accumulate, while waiting for exit
-      int lastYielded = 0;
+      // Wait for stderr to finish
       while (!stderrCompleter.isCompleted) {
         await Future<void>.delayed(const Duration(milliseconds: 100));
-        while (lastYielded < progressEvents.length) {
-          yield progressEvents[lastYielded++];
-        }
-      }
-      // Yield any remaining events
-      while (lastYielded < progressEvents.length) {
-        yield progressEvents[lastYielded++];
       }
 
       final exitCode = await process.exitCode;
