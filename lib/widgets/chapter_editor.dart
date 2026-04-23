@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/silence_detection_service.dart';
+import 'package:audiovault_editor/widgets/detect_chapters_dialog.dart';
 import 'package:audiovault_editor/widgets/quick_edit_dialog.dart';
 import 'package:path/path.dart' as p;
 
@@ -590,6 +592,8 @@ class _ChapterEditorState extends State<ChapterEditor> {
           tooltip: 'Redo',
           onPressed: _ctrl.canRedo ? () => _mutate(_ctrl.redo) : null,
         ),
+        const SizedBox(width: 4),
+        if (_isSingleFile) _buildDetectButton(),
         const Spacer(),
         OutlinedButton.icon(
           icon: const Icon(Icons.edit_note, size: 18),
@@ -599,6 +603,42 @@ class _ChapterEditorState extends State<ChapterEditor> {
         // CUE export button — only for MP3 single-file books, wired in task 7
       ],
     );
+  }
+
+  Widget _buildDetectButton() {
+    final ffmpegAvailable = SilenceDetectionService.isAvailable;
+    const tooltip = 'Detect chapters from silence in the audio';
+    const missingTooltip =
+        'ffmpeg not found. Add ffmpeg to your PATH, or place ffmpeg.exe '
+        '(or ffmpeg/bin/ffmpeg.exe) next to audiovault_editor.exe.';
+
+    return Tooltip(
+      message: ffmpegAvailable ? tooltip : missingTooltip,
+      child: OutlinedButton.icon(
+        icon: const Icon(Icons.graphic_eq, size: 16),
+        label: const Text('Detect chapters'),
+        style: ffmpegAvailable
+            ? null
+            : OutlinedButton.styleFrom(
+                foregroundColor: Colors.grey,
+                side: const BorderSide(color: Colors.grey),
+              ),
+        onPressed: ffmpegAvailable ? _openDetectDialog : null,
+      ),
+    );
+  }
+
+  Future<void> _openDetectDialog() async {
+    final filePath = widget.book.audioFiles.first;
+    final result = await showDetectChaptersDialog(
+      context: context,
+      filePath: filePath,
+      totalDuration: widget.book.duration,
+      existingChapterCount: _ctrl.entries.length,
+    );
+    if (result != null && mounted) {
+      _mutate(() => _ctrl.replaceAll(result));
+    }
   }
 
   Widget _buildConflictBanner() {
