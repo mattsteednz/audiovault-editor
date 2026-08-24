@@ -2,6 +2,8 @@
 
 A Flutter Windows desktop companion app for [AudioVault](https://github.com/mattlgroff/audiovault) that lets you browse and edit audiobook metadata in your local library.
 
+> 📖 **User guide:** [docs/USER_GUIDE.md](docs/USER_GUIDE.md) · **Releasing:** [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+
 ## Features
 
 - **Library scanning** — open any folder and recursively finds audiobooks organised as subfolders of audio files (MP3, M4B, AAC, FLAC, OGG), including author/series grouping up to three levels deep. Reads `metadata.opf` files (Calibre/OverDrive) for richer metadata including series, narrator, genre, identifier, and multiple authors.
@@ -15,6 +17,9 @@ A Flutter Windows desktop companion app for [AudioVault](https://github.com/matt
 - **Cover art** — drag and drop a new cover image onto the book; on Apply it is converted to JPEG, embedded into each audio file (ID3v2 APIC for MP3, MP4 `covr` atom for M4B/M4A), and written as `cover.jpg` to the book folder
 - **Export metadata** — generates a `metadata.opf` (Calibre-compatible) and `cover.jpg` in the book folder from the current metadata
 - **Unsaved change tracking** — an indicator shows which books have unapplied edits; Apply is only enabled when something has actually changed
+- **Apply-and-next** — after a successful Apply the selection advances to the next book in the current view (toggleable), built for rapid multi-book sessions
+- **Keyboard shortcuts** — `Ctrl+S` apply · `Ctrl+O` open folder · `Ctrl+F` search · `F5` rescan library · `Esc` clear search
+- **Library filters** — duplicate, missing-cover, missing-chapters, and read-only chips; search matches title, author, narrator, and series
 
 ## Getting Started
 
@@ -56,6 +61,10 @@ flutter run -d windows
 | FLAC | ✓ | ✓ (METADATA_BLOCK_PICTURE) |
 | OGG | ✓ | ✓ (Vorbis comment) |
 | AAC | ✓ | — |
+
+> Note: `.aac` files are raw ADTS streams with no tag surface — the app reads
+> their duration but reports "not supported" instead of silently skipping
+> writes.
 
 ## License
 

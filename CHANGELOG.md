@@ -1,5 +1,49 @@
 # Changelog
 
+## [3.0.0]
+
+### Added
+- **Multi-level undo/redo** (25 entries) covering tag applies, rescans, batch edits and folder renames; `Ctrl+Z` / `Ctrl+Y` global shortcuts with per-action labels
+- **Library snapshot export** — bundle freshly generated `metadata.opf` files (plus cover art) for every shown book into a single `.zip`
+- **File logging** with daily rotation and 7-day retention; "Open log folder" from Settings for bug reports
+- Welcome/empty-state screen for first launch
+- Smoke/integration test infrastructure via injectable `HomeScreen`
+
+### Changed
+- **Streaming atomic writes** for MP3, M4B/M4A and FLAC: untouched audio is copied in 1 MiB chunks instead of being held in RAM, so editing multi-gigabyte books no longer spikes memory
+- Detail action bar wraps gracefully at narrow window widths
+- CI uploads test coverage (`lcov.info`) as a build artifact
+- Analyzer now runs with `strict-casts` and `strict-raw-types`
+
+## [2.0.0]
+
+### Added
+- **Apply-and-next**: after a successful Apply the selection advances to the next book in view (toggleable) — built for rapid multi-book sessions
+- **Keyboard shortcuts**: `Ctrl+S` apply · `Ctrl+O` open folder · `Ctrl+F` focus search · `F5` rescan library · `Esc` clear search
+- **No-chapters filter chip** and sidebar badge (single-file books without embedded/CUE chapters)
+- Search now matches **narrator and series**, not just title/author
+- **Show in Explorer** action for the selected book
+- **Renumber chapters** button ("Chapter 1..N", single undo step)
+- **Shift start times…** tool for chapter timestamps (± seconds, first chapter pinned)
+- **Settings dialog**: ffmpeg path override with picker, advance-after-apply toggle, optional `.bak` backups
+- **Bulk OPF export** for every shown book; **Load folder's metadata.opf** fills the form for review before Apply
+- Optional `.bak` backup of originals before first overwrite of each audio file
+- Rescan-library toolbar button; restore last-selected book on launch
+- Unsaved-changes confirmation when closing the app
+
+### Fixed
+- Batch edit no longer blanks fields in the UI that were left untouched on disk
+- Non-Latin titles no longer corrupt on write (ID3 frames are UTF-8; MP4 atoms truly UTF-8)
+- ID3v2.4 tags keep their version and syncsafe frame sizes instead of being mangled as v2.3
+- OGG comment headers spanning multiple pages rewrite correctly (page rebuild + CRC + sequence renumbering); oversized cover art can no longer corrupt the stream
+- M4B Nero `chpl` rewrites patch ancestor box sizes, fixing structural corruption when chapter sets changed size
+- MP4 writes support 64-bit extended boxes and emit `co64` chapter offsets beyond 4 GB
+- Rescan/Apply refreshes visible form fields immediately
+- Stale duplicate/missing-cover/read-only chips after batch apply/rescan/undo
+- `.aac` files report "not supported" on write instead of silently doing nothing
+- ffmpeg detection cached (no process spawn per UI build); cancelled detection kills ffmpeg; real detection progress with determinate bar
+- Cover thumbnails decode at display resolution (large libraries stay smooth)
+
 ## [1.2.1] - 2026-04-22
 
 ### Fixed

@@ -29,4 +29,11 @@ jobs:
         run: flutter analyze --fatal-warnings
 
       - name: Run tests
-        run: flutter test --reporter=expanded
+        run: flutter test --coverage --reporter=expanded
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
