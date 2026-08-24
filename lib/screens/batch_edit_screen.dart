@@ -40,6 +40,30 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
   }
 
   Future<void> _apply() async {
+    // Guard against accidental bulk writes to many books.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Apply to all selected books?'),
+        content: Text(
+          'The filled-in fields will be written to the tags of all '
+          '${widget.books.length} selected book(s). Blank fields are left '
+          'unchanged.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Apply'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     final author = _authorCtrl.text.trim();
     final narrator = _narratorCtrl.text.trim();
     final releaseDate = _releaseDateCtrl.text.trim();
@@ -58,19 +82,10 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
     final updated = <Audiobook>[];
 
     for (final book in widget.books) {
+      // Blank inputs keep each book's existing value on disk AND in memory,
+      // so a single patched model is used both for writing and for updating
+      // the app state (they must never diverge).
       final patched = book.copyWith(
-        author: author.isNotEmpty ? author : null,
-        narrator: narrator.isNotEmpty ? narrator : null,
-        releaseDate: releaseDate.isNotEmpty ? releaseDate : null,
-        series: series.isNotEmpty ? series : null,
-        seriesIndex: seriesIndex,
-        publisher: publisher.isNotEmpty ? publisher : null,
-        language: language.isNotEmpty ? language : null,
-        genre: genre.isNotEmpty ? genre : null,
-      );
-
-      // Only write fields that were filled in
-      final toWrite = book.copyWith(
         author: author.isNotEmpty ? author : book.author,
         narrator: narrator.isNotEmpty ? narrator : book.narrator,
         releaseDate: releaseDate.isNotEmpty ? releaseDate : book.releaseDate,
@@ -81,15 +96,9 @@ class _BatchEditScreenState extends State<BatchEditScreen> {
         genre: genre.isNotEmpty ? genre : book.genre,
       );
 
-      final errs = await MetadataWriter.applyMetadata(toWrite);
+      final errs = await MetadataWriter.applyMetadata(patched);
       if (errs.isNotEmpty) {
         errors.add('${book.title ?? book.path}: ${errs.join(', ')}');
-      }
-
-      try {
-        await MetadataWriter.exportOpf(toWrite);
-      } catch (e) {
-        errors.add('${book.title ?? book.path} OPF: $e');
       }
 
       updated.add(patched);

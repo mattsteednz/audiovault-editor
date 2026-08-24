@@ -1,6 +1,6 @@
-import 'dart:io';
 import 'package:path/path.dart' as p;
-import 'package:audiovault_editor/widgets/chapter_editor.dart';
+import 'package:audiovault_editor/models/chapter_entry.dart';
+import 'package:audiovault_editor/services/writers/atomic_file_writer.dart';
 
 /// Service for generating and writing CUE sheet files.
 ///
@@ -28,7 +28,7 @@ class CueWriter {
   /// ```
   /// PERFORMER ""
   /// TITLE "<albumTitle>"
-  /// FILE "<mp3Filename>" MP3
+  /// FILE "<audioFilename>" <audioType>
   ///   TRACK 01 AUDIO
   ///     TITLE "<chapter title>"
   ///     INDEX 01 MM:SS:FF
@@ -36,14 +36,18 @@ class CueWriter {
   ///     ...
   /// ```
   static String generate(
-    String mp3Filename,
+    String audioFilename,
     String albumTitle,
     List<ChapterEntry> chapters,
   ) {
     final buf = StringBuffer();
     buf.writeln('PERFORMER ""');
     buf.writeln('TITLE "${_escapeCue(albumTitle)}"');
-    buf.writeln('FILE "${_escapeCue(mp3Filename)}" MP3');
+    
+    // Determine audio type from file extension
+    final audioType = _getAudioType(audioFilename);
+    buf.writeln('FILE "${_escapeCue(audioFilename)}" $audioType');
+    
     for (int i = 0; i < chapters.length; i++) {
       final trackNum = (i + 1).toString().padLeft(2, '0');
       buf.writeln('  TRACK $trackNum AUDIO');
@@ -59,10 +63,10 @@ class CueWriter {
   static Future<void> write(
     String bookPath,
     String bookTitle,
-    String mp3Filename,
+    String audioFilename,
     List<ChapterEntry> chapters,
   ) async {
-    final content = generate(mp3Filename, bookTitle, chapters);
+    final content = generate(audioFilename, bookTitle, chapters);
     // Sanitise bookTitle for use as a filename
     final safeTitle = bookTitle
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
@@ -70,8 +74,32 @@ class CueWriter {
         .trim();
     final filename = safeTitle.isEmpty ? 'chapters' : safeTitle;
     final filePath = p.join(bookPath, '$filename.cue');
-    await File(filePath).writeAsString(content, flush: true);
+    await writeStringAtomic(filePath, content);
   }
 
   static String _escapeCue(String s) => s.replaceAll('"', '\\"');
+
+  /// Returns the CUE sheet audio type based on file extension.
+  static String _getAudioType(String filename) {
+    final ext = p.extension(filename).toLowerCase();
+    switch (ext) {
+      case '.mp3':
+        return 'MP3';
+      case '.wav':
+        return 'WAVE';
+      case '.flac':
+        return 'FLAC';
+      case '.ogg':
+        return 'OGG';
+      case '.m4a':
+      case '.m4b':
+      case '.mp4':
+        return 'MP4';
+      case '.aiff':
+      case '.aif':
+        return 'AIFF';
+      default:
+        return 'BINARY';
+    }
+  }
 }

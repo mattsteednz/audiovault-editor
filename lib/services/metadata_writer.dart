@@ -1,9 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
-import 'package:audiovault_editor/services/writers/mp3_writer.dart';
+import 'package:audiovault_editor/services/writers/atomic_file_writer.dart';
+import 'package:audiovault_editor/services/writers/id3_writer.dart';
 import 'package:audiovault_editor/services/writers/mp4_writer.dart';
 import 'package:audiovault_editor/services/writers/flac_writer.dart';
 import 'package:audiovault_editor/services/writers/ogg_writer.dart';
@@ -11,12 +13,17 @@ import 'package:audiovault_editor/services/writers/ogg_writer.dart';
 class MetadataWriter {
   const MetadataWriter._();
 
-  /// Converts [imageBytes] to JPEG, returning re-encoded bytes.
-  static Future<Uint8List> toJpeg(Uint8List imageBytes) async {
+  /// JPEG re-encode worker — runs off the UI isolate because decoding and
+  /// encoding large cover art is expensive.
+  static Uint8List _toJpegJob(Uint8List imageBytes) {
     final decoded = img.decodeImage(imageBytes);
     if (decoded == null) throw Exception('Could not decode image');
     return Uint8List.fromList(img.encodeJpg(decoded, quality: 92));
   }
+
+  /// Converts [imageBytes] to JPEG, returning re-encoded bytes.
+  static Future<Uint8List> toJpeg(Uint8List imageBytes) =>
+      compute(_toJpegJob, imageBytes);
 
   /// Embeds title, author, narrator, and year into all audio files.
   /// Returns a list of per-file error strings; empty = full success.
@@ -27,12 +34,18 @@ class MetadataWriter {
       try {
         if (ext == '.mp3') {
           await Mp3Writer.writeMetadata(filePath, book);
-        } else if (ext == '.m4b' || ext == '.m4a' || ext == '.aac') {
+        } else if (ext == '.m4b' || ext == '.m4a') {
           await Mp4Writer.writeMetadata(filePath, book);
         } else if (ext == '.flac') {
           await FlacWriter.writeMetadata(filePath, book);
         } else if (ext == '.ogg') {
           await OggWriter.writeMetadata(filePath, book);
+        } else if (ext == '.aac') {
+          // Raw .aac files are ADTS streams, not MP4 containers — there is no
+          // tag surface to write to. Report it instead of silently no-op'ing.
+          errors.add(
+              '${p.basename(filePath)}: metadata writing is not supported for '
+              '.aac files');
         }
       } catch (e) {
         errors.add('${p.basename(filePath)}: $e');
@@ -48,18 +61,22 @@ class MetadataWriter {
     final errors = <String>[];
     final imageBytes = await File(imagePath).readAsBytes();
     final jpegBytes = await toJpeg(imageBytes);
-    await File(p.join(book.path, 'cover.jpg')).writeAsBytes(jpegBytes);
+    await writeFileAtomic(p.join(book.path, 'cover.jpg'), jpegBytes);
     for (final filePath in book.audioFiles) {
       final ext = p.extension(filePath).toLowerCase();
       try {
         if (ext == '.mp3') {
           await Mp3Writer.embedCover(filePath, jpegBytes);
-        } else if (ext == '.m4b' || ext == '.m4a' || ext == '.aac') {
+        } else if (ext == '.m4b' || ext == '.m4a') {
           await Mp4Writer.embedCover(filePath, jpegBytes);
         } else if (ext == '.flac') {
           await FlacWriter.embedCover(filePath, jpegBytes);
         } else if (ext == '.ogg') {
           await OggWriter.embedCover(filePath, jpegBytes);
+        } else if (ext == '.aac') {
+          errors.add(
+              '${p.basename(filePath)}: cover embedding is not supported for '
+              '.aac files');
         }
       } catch (e) {
         errors.add('${p.basename(filePath)}: $e');
@@ -102,16 +119,22 @@ class MetadataWriter {
   }
 
   static Future<void> exportCover(Audiobook book) async {
-    final coverOut = File(p.join(book.path, 'cover.jpg'));
+    final coverOut = p.join(book.path, 'cover.jpg');
     if (book.coverImageBytes != null) {
-      await coverOut.writeAsBytes(await toJpeg(book.coverImageBytes!));
+      await writeFileAtomic(coverOut, await toJpeg(book.coverImageBytes!));
     } else if (book.coverImagePath != null) {
       final bytes = await File(book.coverImagePath!).readAsBytes();
-      await coverOut.writeAsBytes(await toJpeg(bytes));
+      await writeFileAtomic(coverOut, await toJpeg(bytes));
     }
   }
 
   static Future<void> exportOpf(Audiobook book) async {
+    await writeStringAtomic(
+        p.join(book.path, 'metadata.opf'), buildOpfXml(book));
+  }
+
+  /// Serialises [book] into OPF 2.0 XML (pure function — no I/O).
+  static String buildOpfXml(Audiobook book) {
     final buf = StringBuffer()
       ..writeln('<?xml version="1.0" encoding="utf-8"?>')
       ..writeln('<package xmlns="http://www.idpf.org/2007/opf" version="2.0" '
@@ -177,9 +200,7 @@ class MetadataWriter {
     buf
       ..writeln('  </metadata>')
       ..writeln('</package>');
-
-    await File(p.join(book.path, 'metadata.opf'))
-        .writeAsString(buf.toString());
+    return buf.toString();
   }
 
   static String _xmlEscape(String s) => s

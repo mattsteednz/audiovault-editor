@@ -1479,7 +1479,7 @@ void main() {
 
       expect(
         find.text(
-            'One chapter per line: Title  (blank lines = placeholder rows)'),
+            'One chapter title per line  (blank lines = placeholder rows)'),
         findsOneWidget,
       );
     });

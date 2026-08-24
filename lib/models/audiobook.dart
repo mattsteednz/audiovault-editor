@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+enum ReadOnlyStatus { writable, folderReadOnly, filesReadOnly }
+
 class Chapter {
   final String title;
   final Duration start;
@@ -38,6 +40,7 @@ class Audiobook {
   final bool hasOpf;
   final bool hasCue;
   final bool hasEmbeddedTags;
+  final ReadOnlyStatus readOnlyStatus;
 
   /// Raw values read directly from audio file tags, before OPF override.
   final String? fileTitleRaw;
@@ -74,6 +77,7 @@ class Audiobook {
     this.hasOpf = false,
     this.hasCue = false,
     this.hasEmbeddedTags = false,
+    this.readOnlyStatus = ReadOnlyStatus.writable,
     this.fileTitleRaw,
     this.fileAuthorRaw,
     this.fileNarratorRaw,
@@ -85,6 +89,7 @@ class Audiobook {
   static const Object _unset = Object();
 
   Audiobook copyWith({
+    Object? path = _unset,
     Object? title = _unset,
     Object? author = _unset,
     Object? narrator = _unset,
@@ -116,12 +121,13 @@ class Audiobook {
     bool? hasOpf,
     bool? hasCue,
     bool? hasEmbeddedTags,
+    ReadOnlyStatus? readOnlyStatus,
   }) =>
       Audiobook(
+        path: path == _unset ? this.path : path as String,
         title: title == _unset ? this.title : title as String?,
         author: author == _unset ? this.author : author as String?,
         duration: duration == _unset ? this.duration : duration as Duration?,
-        path: path,
         coverImagePath: coverImagePath == _unset
             ? this.coverImagePath
             : coverImagePath as String?,
@@ -154,6 +160,7 @@ class Audiobook {
         hasOpf: hasOpf ?? this.hasOpf,
         hasCue: hasCue ?? this.hasCue,
         hasEmbeddedTags: hasEmbeddedTags ?? this.hasEmbeddedTags,
+        readOnlyStatus: readOnlyStatus ?? this.readOnlyStatus,
         fileTitleRaw:
             fileTitleRaw == _unset ? this.fileTitleRaw : fileTitleRaw as String?,
         fileAuthorRaw: fileAuthorRaw == _unset

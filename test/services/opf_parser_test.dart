@@ -48,7 +48,7 @@ void main() {
       expect(result.seriesIndex, 3);
     });
 
-    test('extracts year from full date string', () {
+    test('preserves full date precision', () {
       const xml = '''<?xml version="1.0"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -57,7 +57,7 @@ void main() {
   </metadata>
 </package>''';
       final result = parseOpf(xml);
-      expect(result.releaseDate, '2019');
+      expect(result.releaseDate, '2019-06-15');
     });
 
     test('parses publisher and language', () {

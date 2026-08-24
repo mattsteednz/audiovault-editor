@@ -1,4 +1,5 @@
 import 'package:xml/xml.dart';
+import 'package:audiovault_editor/services/app_logger.dart';
 
 class OpfMetadata {
   final String? title;
@@ -76,9 +77,15 @@ OpfMetadata parseOpf(String xmlContent) {
     identifier = _dcText(metadata, 'identifier');
 
     final dateText = _dcText(metadata, 'date');
-    if (dateText != null && dateText.length >= 4) {
-      final year = dateText.substring(0, 4);
-      if (int.tryParse(year) != null) releaseDate = year;
+    if (dateText != null) {
+      // Preserve the full precision of the stored date ("2019-06-15");
+      // format-specific writers reduce it where the container demands
+      // (e.g. ID3v2.3 TYER is year-only).
+      final trimmed = dateText.trim();
+      if (trimmed.length >= 4 &&
+          int.tryParse(trimmed.substring(0, 4)) != null) {
+        releaseDate = trimmed;
+      }
     }
 
     for (final el in metadata.findElements('meta')) {
@@ -114,7 +121,8 @@ OpfMetadata parseOpf(String xmlContent) {
       additionalNarrators: narrators.length > 1 ? narrators.sublist(1) : const [],
       opfMeta: opfMeta,
     );
-  } catch (_) {
+  } catch (e) {
+    AppLog.w('Failed to parse OPF XML: $e');
     return const OpfMetadata();
   }
 }

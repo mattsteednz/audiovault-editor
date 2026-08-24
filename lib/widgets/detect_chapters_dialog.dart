@@ -66,6 +66,7 @@ Future<List<ChapterEntry>?> showDetectChaptersDialog({
   required String filePath,
   required Duration? totalDuration,
   required int existingChapterCount,
+  SilenceDetectionService? service,
 }) {
   return showDialog<List<ChapterEntry>>(
     context: context,
@@ -74,6 +75,7 @@ Future<List<ChapterEntry>?> showDetectChaptersDialog({
       filePath: filePath,
       totalDuration: totalDuration,
       existingChapterCount: existingChapterCount,
+      service: service,
     ),
   );
 }
@@ -87,11 +89,16 @@ class DetectChaptersDialog extends StatefulWidget {
   final Duration? totalDuration;
   final int existingChapterCount;
 
+  /// Injectable detection service (used by tests). Defaults to a new
+  /// [SilenceDetectionService].
+  final SilenceDetectionService? service;
+
   const DetectChaptersDialog({
     super.key,
     required this.filePath,
     required this.totalDuration,
     required this.existingChapterCount,
+    this.service,
   });
 
   @override
@@ -99,6 +106,9 @@ class DetectChaptersDialog extends StatefulWidget {
 }
 
 class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
+  late final SilenceDetectionService _detector =
+      widget.service ?? SilenceDetectionService();
+
   // ── Form state ─────────────────────────────────────────────────────────────
   final _floorCtrl = TextEditingController(text: '-45');
   final _durationCtrl = TextEditingController(text: '1.5');
@@ -116,6 +126,7 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
   List<ChapterEntry> _detected = [];
   double _usedFloor = -45;
   double _usedDuration = 1.5;
+  double? _progressFraction;
 
   // ── Stream subscription ────────────────────────────────────────────────────
   StreamSubscription<SilenceDetectionProgress>? _sub;
@@ -123,6 +134,8 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
   @override
   void dispose() {
     _sub?.cancel();
+    // Make sure a running ffmpeg process never outlives the dialog.
+    _detector.cancel();
     _floorCtrl.dispose();
     _durationCtrl.dispose();
     _floorFocus.dispose();
@@ -176,14 +189,14 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
 
     setState(() {
       _state = _DialogState.detecting;
+      _progressFraction = null;
       _retryMessage = attempt > 0
           ? 'Adjusting parameters and retrying (attempt ${attempt + 1}/5)…'
           : null;
     });
 
-    final service = SilenceDetectionService();
     _sub?.cancel();
-    _sub = service
+    _sub = _detector
         .detect(
           filePath: widget.filePath,
           noiseFloorDb: params.noiseFloor,
@@ -213,18 +226,54 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
     if (!mounted) return;
 
     switch (event) {
-      case SilenceDetectionProgressUpdate():
-        // Progress percentage not available — spinner handles feedback
-        break;
+      case SilenceDetectionProgressUpdate(:final fraction):
+        setState(() => _progressFraction = fraction);
 
       case SilenceDetectionComplete(:final boundaries):
-        // Build chapter entries: Chapter 1 at 00:00:00, then one per boundary
+        // Build chapter entries: Chapter 1 at 00:00:00, then one per boundary.
+        //
+        // Filtering rules (applied in order):
+        //   1. Drop any boundary at or beyond totalDuration (would produce a
+        //      zero- or negative-duration last chapter).
+        //   2. Drop any boundary that would produce a chapter shorter than 5 s,
+        //      measured against the *filtered* list so cascading short gaps are
+        //      all removed correctly.
+        final totalDuration = widget.totalDuration;
+
+        // Step 1: strip out-of-range boundaries up front.
+        final inRange = totalDuration == null
+            ? List<Duration>.of(boundaries)
+            : boundaries
+                .where((b) => b < totalDuration)
+                .toList();
+
+        // Step 2: iteratively drop boundaries that create < 5 s chapters.
+        // We rebuild the list from scratch so that removing one boundary
+        // correctly re-evaluates its neighbours.
+        const minChapter = Duration(seconds: 5);
+        final filteredBoundaries = <Duration>[];
+        for (final current in inRange) {
+          // The chapter that ends at `current` starts at the last accepted
+          // boundary (or Duration.zero if none yet).
+          final prevPoint = filteredBoundaries.isEmpty
+              ? Duration.zero
+              : filteredBoundaries.last;
+          if (current - prevPoint < minChapter) continue;
+          filteredBoundaries.add(current);
+        }
+        // Also check the final chapter (last boundary → totalDuration).
+        if (filteredBoundaries.isNotEmpty && totalDuration != null) {
+          if (totalDuration - filteredBoundaries.last < minChapter) {
+            filteredBoundaries.removeLast();
+          }
+        }
+
         final entries = <ChapterEntry>[
           const ChapterEntry(title: 'Chapter 1', start: Duration.zero),
-          for (int i = 0; i < boundaries.length; i++)
+          for (int i = 0; i < filteredBoundaries.length; i++)
             ChapterEntry(
               title: 'Chapter ${i + 2}',
-              start: boundaries[i],
+              start: filteredBoundaries[i],
             ),
         ];
 
@@ -273,6 +322,8 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
   void _cancel() {
     _sub?.cancel();
     _sub = null;
+    // Kill the ffmpeg process — a cancelled detection must not keep scanning.
+    _detector.cancel();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -335,9 +386,11 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       child: ConstrainedBox(
+        // 620 leaves headroom for locales/buttons; typical content is far
+        // narrower.
         constraints: const BoxConstraints(
           minWidth: 460,
-          maxWidth: 520,
+          maxWidth: 620,
         ),
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -469,6 +522,7 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
 
   Widget _buildDetectingView() {
     final theme = Theme.of(context);
+    final fraction = _progressFraction;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -476,10 +530,12 @@ class _DetectChaptersDialogState extends State<DetectChaptersDialog> {
         Text('Detecting chapters…', style: theme.textTheme.titleLarge),
         const SizedBox(height: 20),
 
-        const LinearProgressIndicator(),
+        LinearProgressIndicator(value: fraction),
         const SizedBox(height: 8),
         Text(
-          'Scanning audio…',
+          fraction != null
+              ? 'Scanning audio… ${(fraction * 100).clamp(0, 100).toStringAsFixed(0)}%'
+              : 'Scanning audio…',
           style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
         ),
 

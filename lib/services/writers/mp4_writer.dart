@@ -1,21 +1,78 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/writers/atomic_file_writer.dart';
 
 class Mp4Writer {
   const Mp4Writer._();
 
   static Future<void> writeMetadata(String filePath, Audiobook book) async {
     final bytes = await File(filePath).readAsBytes();
-    final result = _rewriteMetadata(bytes, book);
-    await File(filePath).writeAsBytes(result);
+    final plan = _metadataPlan(bytes, book);
+    if (plan == null) return;
+    await writeFileAtomicSplice(filePath, plan);
+  }
+
+  static SplicePlan? _metadataPlan(Uint8List bytes, Audiobook book) {
+    final moovIdx = _findBox(bytes, 0, bytes.length, 'moov');
+    if (moovIdx == null) return null;
+
+    final moovData = _dataStartAt(bytes, moovIdx.$1, moovIdx.$2);
+    final moovContent = bytes.sublist(moovData, moovIdx.$2);
+    var newMoovContent = _injectTextAtomsInMoov(moovContent, book);
+    newMoovContent = _shiftOffsetsIfMdatFollows(
+        bytes, moovIdx.$1, moovIdx.$2, newMoovContent);
+    final newMoov = _wrapBox('moov', newMoovContent);
+    return SplicePlan(
+        replaceStart: moovIdx.$1,
+        replaceEnd: moovIdx.$2,
+        replacement: newMoov);
+  }
+
+  /// If mdat follows moov in [bytes], growing/shrinking moov by
+  /// `(8 + newMoovContent.length) - oldMoovSize` shifts every media chunk.
+  /// stco/co64 tables live only under moov, so patching the rebuilt children
+  /// is equivalent to patching the spliced file.
+  static Uint8List _shiftOffsetsIfMdatFollows(Uint8List bytes, int moovStart,
+      int moovEnd, Uint8List newMoovContent) {
+    final mdatIdx = _findBox(bytes, 0, bytes.length, 'mdat');
+    if (mdatIdx == null || moovStart >= mdatIdx.$1) return newMoovContent;
+    final delta =
+        8 + newMoovContent.length - (moovEnd - moovStart);
+    if (delta == 0) return newMoovContent;
+    final patched = Uint8List.fromList(newMoovContent);
+    _adjustChunkOffsets(patched, delta);
+    return patched;
+  }
+
+  /// Pure cores — build a plan and execute it against the original bytes.
+  /// Existing tests assert on the executed output.
+  @visibleForTesting
+  static Uint8List rewriteMetadataForTest(Uint8List bytes, Audiobook book) {
+    final plan = _metadataPlan(bytes, book);
+    return plan == null ? bytes : plan.execute(bytes);
+  }
+
+  @visibleForTesting
+  static Uint8List rewriteCoverForTest(Uint8List bytes, Uint8List jpeg) {
+    final plan = _coverPlan(bytes, jpeg);
+    return plan == null ? bytes : plan.execute(bytes);
+  }
+
+  @visibleForTesting
+  static Uint8List writeChaptersForTest(Uint8List bytes,
+      List<Chapter> chapters, Duration? bookDuration) {
+    final plan = _chaptersPlan(bytes, chapters, bookDuration);
+    return plan == null ? bytes : plan.execute(bytes);
   }
 
   static Future<void> embedCover(String filePath, Uint8List jpeg) async {
     final bytes = await File(filePath).readAsBytes();
-    final result = _rewriteCover(bytes, jpeg);
-    await File(filePath).writeAsBytes(result);
+    final plan = _coverPlan(bytes, jpeg);
+    if (plan == null) return;
+    await writeFileAtomicSplice(filePath, plan);
   }
 
   // ── Chapter track write ───────────────────────────────────────────────────
@@ -33,18 +90,69 @@ class Mp4Writer {
   ) async {
     if (chapters.isEmpty) return;
     final bytes = await File(filePath).readAsBytes();
-    final result = _rewriteChapters(bytes, chapters, bookDuration);
-    await File(filePath).writeAsBytes(result);
+    final plan = _chaptersPlan(bytes, chapters, bookDuration);
+    if (plan == null) return;
+    await writeFileAtomicSplice(filePath, plan);
   }
 
-  static Uint8List _rewriteChapters(
-      Uint8List bytes, List<Chapter> chapters, Duration? bookDuration) {
+  /// Reads a box header at [pos]. Returns `(size, headerSize)` where [size]
+  /// is the full box size (handling the 64-bit extended-size form `size==1`
+  /// and the "until end" form `size==0`) and [headerSize] is 8 or 16.
+  /// Returns size 0 for malformed headers.
+  static (int, int) _boxHeaderAt(Uint8List b, int pos, int end) {
+    final sz32 = readUint32BE(b, pos);
+    if (sz32 == 1) {
+      if (pos + 16 > end) return (0, 8);
+      final hi = readUint32BE(b, pos + 8);
+      final lo = readUint32BE(b, pos + 12);
+      final v = (hi << 32) | lo;
+      return (v < 16 ? 0 : v, 16);
+    }
+    if (sz32 == 0) return (end - pos, 8);
+    return (sz32, 8);
+  }
+
+  /// Start offset of a box's payload (past its header), honouring extended
+  /// 64-bit headers.
+  static int _dataStartAt(Uint8List b, int boxStart, int boxEnd) =>
+      boxStart + _boxHeaderAt(b, boxStart, boxEnd).$2;
+
+  static SplicePlan? _chaptersPlan(
+      Uint8List bytes, List<Chapter> chapters, Duration? bookDuration,
+      {bool forceCo64 = false}) {
     // Step 1: Find moov
     final moovIdx = _findBox(bytes, 0, bytes.length, 'moov');
-    if (moovIdx == null) return bytes;
+    if (moovIdx == null) return null;
 
     final moovStart = moovIdx.$1;
     final moovEnd = moovIdx.$2;
+
+    // Step 1b: Rewrite chpl (Nero) atom if present, so the scanner's
+    // chpl-first read path picks up the new chapter names. Because we
+    // rebuild the whole moov below, ancestor size fixups are unnecessary.
+    bytes = _rewriteChpl(bytes, moovStart, moovEnd, chapters);
+
+    // Re-find moov after the potential chpl splice (size may have changed).
+    final moovIdx2 = _findBox(bytes, 0, bytes.length, 'moov');
+    if (moovIdx2 == null) return null;
+    final moovStart2 = moovIdx2.$1;
+    final moovEnd2 = moovIdx2.$2;
+
+    // If the file had a chpl atom we've already updated it — no need to also
+    // write a QT chapter track. Only write the QT track for files that had
+    // neither format (chpl was absent).
+    final hadChpl = _hasChpl(bytes, moovStart2, moovEnd2);
+    if (hadChpl) {
+      // chpl already updated above; no QT chapter track is added. The plan
+      // replaces the (already-fixed) moov region.
+      final updatedMoov = _findBox(bytes, 0, bytes.length, 'moov');
+      if (updatedMoov == null) return null;
+      return SplicePlan(
+        replaceStart: moovStart2,
+        replaceEnd: moovEnd2,
+        replacement: bytes.sublist(updatedMoov.$1, updatedMoov.$2),
+      );
+    }
 
     // Step 2: Parse moov to find audio track ID and timescale
     int audioTrackId = 1;
@@ -52,27 +160,29 @@ class Mp4Writer {
     int movieTimescale = 1000;
 
     // Find mvhd for movie timescale
-    final mvhdIdx = _findBox(bytes, moovStart + 8, moovEnd, 'mvhd');
+    final mvhdIdx = _findBox(bytes, moovStart2 + 8, moovEnd2, 'mvhd');
     if (mvhdIdx != null) {
-      final version = bytes[mvhdIdx.$1 + 8];
-      movieTimescale = readUint32BE(bytes, mvhdIdx.$1 + 8 + (version == 1 ? 20 : 12));
+      final mvhdData = _dataStartAt(bytes, mvhdIdx.$1, mvhdIdx.$2);
+      final version = bytes[mvhdData];
+      movieTimescale = readUint32BE(bytes, mvhdData + (version == 1 ? 20 : 12));
     }
 
     // Walk trak boxes to find audio track
-    int pos = moovStart + 8;
-    while (pos + 8 <= moovEnd) {
-      final sz = readUint32BE(bytes, pos);
-      if (sz < 8 || pos + sz > moovEnd) break;
+    int pos = moovStart2 + 8;
+    while (pos + 8 <= moovEnd2) {
+      final (sz, hdrSize) = _boxHeaderAt(bytes, pos, moovEnd2);
+      if (sz < 8 || pos + sz > moovEnd2) break;
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       if (type == 'trak') {
         final trakEnd = pos + sz;
         // Check mdia/hdlr for 'soun'
-        final mdiaIdx = _findBox(bytes, pos + 8, trakEnd, 'mdia');
+        final mdiaIdx = _findBox(bytes, pos + hdrSize, trakEnd, 'mdia');
         if (mdiaIdx != null) {
           final hdlrIdx = _findBox(bytes, mdiaIdx.$1 + 8, mdiaIdx.$2, 'hdlr');
           if (hdlrIdx != null) {
             // hdlr: version(1) + flags(3) + pre_defined(4) + handler_type(4)
-            final handlerOffset = hdlrIdx.$1 + 8 + 8;
+            final handlerOffset =
+                _dataStartAt(bytes, hdlrIdx.$1, hdlrIdx.$2) + 8;
             if (handlerOffset + 4 <= hdlrIdx.$2) {
               final handler = String.fromCharCodes(
                   bytes.sublist(handlerOffset, handlerOffset + 4));
@@ -80,17 +190,19 @@ class Mp4Writer {
                 // Read track ID from tkhd
                 final tkhdIdx = _findBox(bytes, pos + 8, trakEnd, 'tkhd');
                 if (tkhdIdx != null) {
-                  final tkhdVersion = bytes[tkhdIdx.$1 + 8];
-                  audioTrackId = readUint32BE(
-                      bytes, tkhdIdx.$1 + 8 + (tkhdVersion == 1 ? 20 : 12));
+                  final tkhdData = _dataStartAt(bytes, tkhdIdx.$1, tkhdIdx.$2);
+                  final tkhdVersion = bytes[tkhdData];
+                  audioTrackId =
+                      readUint32BE(bytes, tkhdData + (tkhdVersion == 1 ? 20 : 12));
                 }
                 // Read timescale from mdhd
                 final mdhdIdx =
                     _findBox(bytes, mdiaIdx.$1 + 8, mdiaIdx.$2, 'mdhd');
                 if (mdhdIdx != null) {
-                  final mdhdVersion = bytes[mdhdIdx.$1 + 8];
-                  audioTimescale = readUint32BE(bytes,
-                      mdhdIdx.$1 + 8 + (mdhdVersion == 1 ? 20 : 12));
+                  final mdhdData = _dataStartAt(bytes, mdhdIdx.$1, mdhdIdx.$2);
+                  final mdhdVersion = bytes[mdhdData];
+                  audioTimescale =
+                      readUint32BE(bytes, mdhdData + (mdhdVersion == 1 ? 20 : 12));
                   if (audioTimescale == 0) audioTimescale = 44100;
                 }
               }
@@ -107,10 +219,10 @@ class Mp4Writer {
     final List<Uint8List> nonChapterTraks = [];
     Uint8List? audioTrakBytes;
 
-    pos = moovStart + 8;
-    while (pos + 8 <= moovEnd) {
-      final sz = readUint32BE(bytes, pos);
-      if (sz < 8 || pos + sz > moovEnd) break;
+    pos = moovStart2 + 8;
+    while (pos + 8 <= moovEnd2) {
+      final (sz, hdrSize) = _boxHeaderAt(bytes, pos, moovEnd2);
+      if (sz < 8 || pos + sz > moovEnd2) break;
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       if (type == 'trak') {
         final trakEnd = pos + sz;
@@ -118,12 +230,13 @@ class Mp4Writer {
         // Check if this is a chapter text track (has mdia/hdlr 'text' AND mdia/minf/gmhd)
         bool isChapterTrack = false;
         bool isAudioTrack = false;
-        final mdiaIdx = _findBox(bytes, pos + 8, trakEnd, 'mdia');
+        final mdiaIdx = _findBox(bytes, pos + hdrSize, trakEnd, 'mdia');
         if (mdiaIdx != null) {
           final hdlrIdx =
               _findBox(bytes, mdiaIdx.$1 + 8, mdiaIdx.$2, 'hdlr');
           if (hdlrIdx != null) {
-            final handlerOffset = hdlrIdx.$1 + 8 + 8;
+            final handlerOffset =
+                _dataStartAt(bytes, hdlrIdx.$1, hdlrIdx.$2) + 8;
             if (handlerOffset + 4 <= hdlrIdx.$2) {
               final handler = String.fromCharCodes(
                   bytes.sublist(handlerOffset, handlerOffset + 4));
@@ -155,6 +268,8 @@ class Mp4Writer {
       }
       pos += sz;
     }
+
+    final useCo64 = forceCo64;
 
     // Step 4: Build the new chapter text track
     final chapterTrackId = audioTrackId + 1;
@@ -212,11 +327,21 @@ class Mp4Writer {
     }
     final stszBox = _wrapBox('stsz', stszPayload);
 
-    // stco box: version(4) + entry_count(4) + offsets(n * 4) — placeholder 0s
-    final stcoPayload = Uint8List(4 + 4 + samples.length * 4);
-    writeUint32BE(stcoPayload, 4, samples.length);
+    // Chunk offset table: 32-bit stco normally; 64-bit co64 when the appended
+    // sample data would live beyond the 32-bit address space.
+    final Uint8List chunkPayload;
+    final String chunkType;
+    if (useCo64) {
+      chunkType = 'co64';
+      chunkPayload = Uint8List(4 + 4 + samples.length * 8);
+      writeUint32BE(chunkPayload, 4, samples.length);
+    } else {
+      chunkType = 'stco';
+      chunkPayload = Uint8List(4 + 4 + samples.length * 4);
+      writeUint32BE(chunkPayload, 4, samples.length);
+    }
     // offsets will be fixed up after assembly
-    final stcoBox = _wrapBox('stco', stcoPayload);
+    final chunkBox = _wrapBox(chunkType, chunkPayload);
 
     // stsc box: version(4) + entry_count(4) + one entry(12)
     // first_chunk=1, samples_per_chunk=1, sample_description_index=1
@@ -247,7 +372,7 @@ class Mp4Writer {
       ...stsdBox,
       ...sttsBox,
       ...stszBox,
-      ...stcoBox,
+      ...chunkBox,
       ...stscBox,
     ]);
     final stblBox = _wrapBox('stbl', stblContent);
@@ -290,12 +415,13 @@ class Mp4Writer {
     // hdlr: version(4) + pre_defined(4) + handler_type(4) + reserved(12) + name
     final handlerName = utf8.encode('Chapter Track\x00');
     final hdlrPayload = Uint8List(4 + 4 + 4 + 12 + handlerName.length);
-    // handler_type = 'text'
+    // handler_type = 'text' at offset 8
     hdlrPayload[8] = 0x74; // 't'
     hdlrPayload[9] = 0x65; // 'e'
     hdlrPayload[10] = 0x78; // 'x'
     hdlrPayload[11] = 0x74; // 't'
-    hdlrPayload.setRange(20, hdlrPayload.length, handlerName);
+    // name starts at offset 24 (after version+flags(4) + pre_defined(4) + handler_type(4) + reserved(12))
+    hdlrPayload.setRange(24, hdlrPayload.length, handlerName);
     final hdlrBox = _wrapBox('hdlr', hdlrPayload);
 
     // mdia
@@ -352,38 +478,172 @@ class Mp4Writer {
     }
     newMoovContent.add(chapterTrakBox);
 
-    final newMoov = _wrapBox('moov', Uint8List.fromList(newMoovContent.toBytes()));
+    // Adjust existing chunk offsets if moov precedes mdat — the stco/co64
+    // boxes live exclusively under moov, so patching the rebuilt content
+    // before wrapping is equivalent to patching the spliced file.
+    var moovChildren = newMoovContent.toBytes();
+    moovChildren = _shiftOffsetsIfMdatFollows(
+        bytes, moovStart2, moovEnd2,
+        Uint8List.fromList(moovChildren));
 
-    // Splice new moov into file
-    Uint8List result = _spliceBytes(bytes, moovStart, moovEnd, newMoov);
-
-    // Adjust existing chunk offsets if moov precedes mdat
-    final mdatIdx = _findBox(result, 0, result.length, 'mdat');
-    if (mdatIdx != null && moovStart < mdatIdx.$1) {
-      final delta = newMoov.length - (moovEnd - moovStart);
-      if (delta != 0) _adjustChunkOffsets(result, delta);
+    // Chapter samples are appended after the original EOF; their absolute
+    // offset is therefore fully determined before anything is written.
+    final sampleDataOffset = bytes.length -
+        (moovEnd2 - moovStart2) +
+        (8 + moovChildren.length);
+    // If the sample data would live beyond the 32-bit address space and we
+    // built a 32-bit stco, redo the whole rewrite with co64 entries.
+    if (!forceCo64 && sampleDataOffset + 16 > 0xFFFFFFFF) {
+      return _chaptersPlan(bytes, chapters, bookDuration,
+          forceCo64: true);
     }
-
-    // Step 7: Fix up stco offsets for chapter track
-    // Append sample data at end of file
-    // Find where the chapter track's stco is in the new result
-    final sampleDataOffset = result.length;
-    final sampleData = BytesBuilder();
     final List<int> sampleOffsets = [];
     int cumOffset = sampleDataOffset;
     for (final sample in samples) {
       sampleOffsets.add(cumOffset);
-      sampleData.add(sample);
       cumOffset += sample.length;
     }
 
-    // Append sample data
-    result = Uint8List.fromList([...result, ...sampleData.toBytes()]);
+    // Fix the chapter track's offset table inside the rebuilt moov.
+    final fixed = Uint8List.fromList(moovChildren);
+    _fixChapterChunkOffsetsInContent(
+        fixed, chapterTrackId, sampleOffsets, useCo64);
 
-    // Now find and update the chapter track's stco in the result
-    _fixChapterStco(result, chapterTrackId, sampleOffsets);
+    final newMoov = _wrapBox('moov', fixed);
+    return SplicePlan(
+      replaceStart: moovStart2,
+      replaceEnd: moovEnd2,
+      replacement: newMoov,
+      appendix: Uint8List.fromList(samples.expand((s) => s).toList()),
+    );
+  }
 
-    return result;
+  /// Returns true if a `chpl` atom exists anywhere under [moovStart].
+  static bool _hasChpl(Uint8List bytes, int moovStart, int moovEnd) {
+    bool found = false;
+    void search(int start, int end) {
+      int pos = start;
+      while (pos + 8 <= end) {
+        final (sz, _) = _boxHeaderAt(bytes, pos, end);
+        if (sz < 8 || pos + sz > end) break;
+        final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
+        if (type == 'chpl') { found = true; return; }
+        if (type == 'udta' || type == 'moov') {
+          final (_, hdrSize) = _boxHeaderAt(bytes, pos, end);
+          search(pos + hdrSize, pos + sz);
+        }
+        pos += sz;
+      }
+    }
+    search(moovStart + 8, moovEnd);
+    return found;
+  }
+
+  /// Rewrites the `chpl` (Nero chapter) atom inside `moov > udta` if one
+  /// exists, replacing it with [chapters]. If no `chpl` is found the file is
+  /// returned unchanged — we only update what's already there.
+  ///
+  /// Because the replacement may differ in size, every ancestor container
+  /// between the top level and the chpl box (e.g. moov, udta) has its size
+  /// field adjusted by the delta; otherwise the file would be left with
+  /// structurally invalid container sizes.
+  static Uint8List _rewriteChpl(
+      Uint8List bytes, int moovStart, int moovEnd, List<Chapter> chapters) {
+    // Walk moov children looking for udta, then walk udta for chpl.
+    // chpl can also appear directly under moov in some encoders.
+    int? chplStart;
+    int? chplEnd;
+    final chain = <(int, int)>[]; // ancestor boxes (start, end), outermost first
+
+    void findChpl(int start, int end) {
+      int pos = start;
+      while (pos + 8 <= end) {
+        final (sz, _) = _boxHeaderAt(bytes, pos, end);
+        if (sz < 8 || pos + sz > end) break;
+        final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
+        if (type == 'chpl') {
+          chplStart = pos;
+          chplEnd = pos + sz;
+          return;
+        }
+        if (type == 'udta' || type == 'moov') {
+          chain.add((pos, pos + sz));
+          final (_, hdrSize) = _boxHeaderAt(bytes, pos, end);
+          findChpl(pos + hdrSize, pos + sz);
+          if (chplStart != null) return;
+          chain.removeLast();
+        }
+        pos += sz;
+      }
+    }
+
+    // The moov itself is always an ancestor of any chpl we find here.
+    chain.add((moovStart, moovEnd));
+    findChpl(moovStart + 8, moovEnd);
+    if (chplStart == null) return bytes; // no chpl — nothing to update
+
+    final newChplPayload = _buildChplPayload(chapters);
+    final newChplBox = _wrapBox('chpl', newChplPayload);
+    var out = _spliceBytes(bytes, chplStart!, chplEnd!, newChplBox);
+
+    // Adjust ancestor container sizes by the splice delta.
+    final delta = newChplBox.length - (chplEnd! - chplStart!);
+    if (delta != 0) {
+      for (final (start, end) in chain) {
+        final (sz, hdrSize) = _boxHeaderAt(out, start, end);
+        if (hdrSize == 16) {
+          final hi = readUint32BE(out, start + 8);
+          final lo = readUint32BE(out, start + 12);
+          final newVal = ((hi << 32) | lo) + delta;
+          writeUint32BE(out, start + 8, (newVal >> 32) & 0xFFFFFFFF);
+          writeUint32BE(out, start + 12, newVal & 0xFFFFFFFF);
+        } else if (sz >= 8) {
+          writeUint32BE(out, start, readUint32BE(out, start) + delta);
+        }
+      }
+    }
+    return out;
+  }
+
+  /// Serialises [chapters] into the Nero `chpl` atom payload.
+  ///
+  /// Format (data section, i.e. after the 8-byte box header):
+  ///   version(1) + reserved(4) + count(4) + per-chapter:
+  ///     timestamp_100ns(8, big-endian uint64) + title_len(1) + title(N)
+  static Uint8List _buildChplPayload(List<Chapter> chapters) {
+    // Calculate total size first.
+    int size = 1 + 4 + 4; // version + reserved + count
+    for (final ch in chapters) {
+      size += 8 + 1 + utf8.encode(ch.title).length;
+    }
+    final payload = Uint8List(size);
+    int offset = 0;
+    payload[offset++] = 0; // version
+    offset += 4; // reserved (zeros)
+    // count
+    payload[offset++] = (chapters.length >> 24) & 0xFF;
+    payload[offset++] = (chapters.length >> 16) & 0xFF;
+    payload[offset++] = (chapters.length >> 8) & 0xFF;
+    payload[offset++] = chapters.length & 0xFF;
+    for (final ch in chapters) {
+      // timestamp in 100ns units
+      final units100ns = ch.start.inMicroseconds * 10;
+      payload[offset++] = (units100ns >> 56) & 0xFF;
+      payload[offset++] = (units100ns >> 48) & 0xFF;
+      payload[offset++] = (units100ns >> 40) & 0xFF;
+      payload[offset++] = (units100ns >> 32) & 0xFF;
+      payload[offset++] = (units100ns >> 24) & 0xFF;
+      payload[offset++] = (units100ns >> 16) & 0xFF;
+      payload[offset++] = (units100ns >> 8) & 0xFF;
+      payload[offset++] = units100ns & 0xFF;
+      // title: 1-byte length + UTF-8 bytes (capped at 255)
+      final titleBytes = utf8.encode(ch.title);
+      final titleLen = titleBytes.length > 255 ? 255 : titleBytes.length;
+      payload[offset++] = titleLen;
+      payload.setRange(offset, offset + titleLen, titleBytes);
+      offset += titleLen;
+    }
+    return payload;
   }
 
   /// Adds or replaces a chap atom in the audio trak's tref box.
@@ -396,17 +656,20 @@ class Mp4Writer {
 
     // Find or create tref inside trak
     final trefIdx = _findBox(trakBytes, 8, trakBytes.length, 'tref');
+    final trakDataStart = _dataStartAt(trakBytes, 0, trakBytes.length);
     Uint8List newTrakContent;
     if (trefIdx == null) {
       // Create new tref with chap
       final trefBox = _wrapBox('tref', chapBox);
       newTrakContent = Uint8List.fromList([
-        ...trakBytes.sublist(8), // existing trak content (skip 8-byte header)
+        ...trakBytes.sublist(trakDataStart), // existing trak content
         ...trefBox,
       ]);
     } else {
       // Update existing tref: replace or add chap
-      final trefContent = trakBytes.sublist(trefIdx.$1 + 8, trefIdx.$2);
+      final trefData = _dataStartAt(trakBytes, trefIdx.$1, trefIdx.$2);
+      final trefContent =
+          trakBytes.sublist(trefData, trefIdx.$2);
       final chapIdx = _findBox(trefContent, 0, trefContent.length, 'chap');
       Uint8List newTrefContent;
       if (chapIdx == null) {
@@ -417,44 +680,53 @@ class Mp4Writer {
             trefContent, chapIdx.$1, chapIdx.$2, chapBox);
       }
       final newTref = _wrapBox('tref', newTrefContent);
-      final trakContent = trakBytes.sublist(8);
+      final trakContent = trakBytes.sublist(trakDataStart);
       newTrakContent = Uint8List.fromList(
-          _spliceBytes(trakContent, trefIdx.$1 - 8, trefIdx.$2 - 8, newTref));
+          _spliceBytes(trakContent, trefData - trakDataStart,
+              trefIdx.$2 - trakDataStart, newTref));
     }
     return _wrapBox('trak', newTrakContent);
   }
 
-  /// Finds the chapter track's stco box and updates its offsets.
-  static void _fixChapterStco(
-      Uint8List bytes, int chapterTrackId, List<int> sampleOffsets) {
-    // Walk moov > trak boxes to find the chapter track
-    final moovIdx = _findBox(bytes, 0, bytes.length, 'moov');
-    if (moovIdx == null) return;
-
-    int pos = moovIdx.$1 + 8;
-    while (pos + 8 <= moovIdx.$2) {
-      final sz = readUint32BE(bytes, pos);
-      if (sz < 8 || pos + sz > moovIdx.$2) break;
+  /// Finds the chapter track's chunk-offset table (stco or co64) inside
+  /// rebuilt moov *children* (no outer moov header) and updates its offsets.
+  static void _fixChapterChunkOffsetsInContent(Uint8List children,
+      int chapterTrackId, List<int> sampleOffsets, bool isCo64) {
+    final bytes = children;
+    int pos = 0;
+    while (pos + 8 <= bytes.length) {
+      final (sz, _) = _boxHeaderAt(bytes, pos, bytes.length);
+      if (sz < 8 || pos + sz > bytes.length) break;
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       if (type == 'trak') {
         final trakEnd = pos + sz;
         // Check if this is the chapter track by track ID
         final tkhdIdx = _findBox(bytes, pos + 8, trakEnd, 'tkhd');
         if (tkhdIdx != null) {
-          final tkhdVersion = bytes[tkhdIdx.$1 + 8];
-          final trackId = readUint32BE(
-              bytes, tkhdIdx.$1 + 8 + (tkhdVersion == 1 ? 20 : 12));
+          final tkhdData = _dataStartAt(bytes, tkhdIdx.$1, tkhdIdx.$2);
+          final tkhdVersion = bytes[tkhdData];
+          final trackId =
+              readUint32BE(bytes, tkhdData + (tkhdVersion == 1 ? 20 : 12));
           if (trackId == chapterTrackId) {
-            // Found chapter track — find stco inside stbl
+            // Found chapter track — fix up its offset table inside stbl
             _walkBoxes(bytes, pos + 8, trakEnd, (btype, bstart, bend) {
-              if (btype == 'stco') {
+              if (isCo64 ? btype == 'co64' : btype == 'stco') {
+                final entrySize = isCo64 ? 8 : 4;
                 final count = readUint32BE(bytes, bstart + 8 + 4);
                 final n = count < sampleOffsets.length
                     ? count
                     : sampleOffsets.length;
                 for (int i = 0; i < n; i++) {
-                  writeUint32BE(bytes, bstart + 8 + 8 + i * 4,
-                      sampleOffsets[i]);
+                  if (isCo64) {
+                    final v = sampleOffsets[i];
+                    writeUint32BE(bytes, bstart + 8 + 8 + i * 8,
+                        (v >> 32) & 0xFFFFFFFF);
+                    writeUint32BE(
+                        bytes, bstart + 8 + 12 + i * 8, v & 0xFFFFFFFF);
+                  } else {
+                    writeUint32BE(bytes, bstart + 8 + 8 + i * entrySize,
+                        sampleOffsets[i]);
+                  }
                 }
               }
             });
@@ -477,25 +749,6 @@ class Mp4Writer {
 
   // ── Metadata rewrite ──────────────────────────────────────────────────────
 
-  static Uint8List _rewriteMetadata(Uint8List bytes, Audiobook book) {
-    final moovIdx = _findBox(bytes, 0, bytes.length, 'moov');
-    if (moovIdx == null) return bytes;
-
-    final moovStart = moovIdx.$1;
-    final moovEnd = moovIdx.$2;
-    final moovContent = bytes.sublist(moovStart + 8, moovEnd);
-    final newMoovContent = _injectTextAtomsInMoov(moovContent, book);
-    final newMoov = _wrapBox('moov', newMoovContent);
-
-    final result = _spliceBytes(bytes, moovStart, moovEnd, newMoov);
-    final mdatIdx = _findBox(result, 0, result.length, 'mdat');
-    if (mdatIdx != null && moovStart < mdatIdx.$1) {
-      final delta = newMoov.length - (moovEnd - moovStart);
-      if (delta != 0) _adjustChunkOffsets(result, delta);
-    }
-    return result;
-  }
-
   static Uint8List _injectTextAtomsInMoov(Uint8List moov, Audiobook book) {
     final atoms = <Uint8List>[
       if (book.title != null && book.title!.isNotEmpty)
@@ -517,23 +770,21 @@ class Mp4Writer {
 
   // ── Cover rewrite ─────────────────────────────────────────────────────────
 
-  static Uint8List _rewriteCover(Uint8List bytes, Uint8List jpeg) {
+  static SplicePlan? _coverPlan(Uint8List bytes, Uint8List jpeg) {
     final moovIdx = _findBox(bytes, 0, bytes.length, 'moov');
-    if (moovIdx == null) return bytes;
+    if (moovIdx == null) return null;
 
-    final moovStart = moovIdx.$1;
-    final moovEnd = moovIdx.$2;
-    final moovContent = bytes.sublist(moovStart + 8, moovEnd);
-    final newMoovContent = _injectCovrInMoov(moovContent, _buildCovrAtom(jpeg));
+    final moovData = _dataStartAt(bytes, moovIdx.$1, moovIdx.$2);
+    final moovContent = bytes.sublist(moovData, moovIdx.$2);
+    var newMoovContent =
+        _injectCovrInMoov(moovContent, _buildCovrAtom(jpeg));
+    newMoovContent = _shiftOffsetsIfMdatFollows(
+        bytes, moovIdx.$1, moovIdx.$2, newMoovContent);
     final newMoov = _wrapBox('moov', newMoovContent);
-
-    final result = _spliceBytes(bytes, moovStart, moovEnd, newMoov);
-    final mdatIdx = _findBox(result, 0, result.length, 'mdat');
-    if (mdatIdx != null && moovStart < mdatIdx.$1) {
-      final delta = newMoov.length - (moovEnd - moovStart);
-      if (delta != 0) _adjustChunkOffsets(result, delta);
-    }
-    return result;
+    return SplicePlan(
+        replaceStart: moovIdx.$1,
+        replaceEnd: moovIdx.$2,
+        replacement: newMoov);
   }
 
   static Uint8List _injectCovrInMoov(Uint8List moov, Uint8List covrData) =>
@@ -551,7 +802,8 @@ class Mp4Writer {
       return Uint8List.fromList([...moov, ...udta]);
     }
 
-    final udtaContent = moov.sublist(udtaIdx.$1 + 8, udtaIdx.$2);
+    final udtaData = _dataStartAt(moov, udtaIdx.$1, udtaIdx.$2);
+    final udtaContent = moov.sublist(udtaData, udtaIdx.$2);
     final newUdta =
         _wrapBox('udta', _injectIlstInUdta(udtaContent, atoms, replaceKey));
     return _spliceBytes(moov, udtaIdx.$1, udtaIdx.$2, newUdta);
@@ -565,7 +817,8 @@ class Mp4Writer {
       return Uint8List.fromList([...udta, ...meta]);
     }
 
-    final metaInner = udta.sublist(metaIdx.$1 + 8, metaIdx.$2);
+    final metaDataStart = _dataStartAt(udta, metaIdx.$1, metaIdx.$2);
+    final metaInner = udta.sublist(metaDataStart, metaIdx.$2);
     final metaFlags = metaInner.sublist(0, 4);
     final metaContent = metaInner.sublist(4);
     final newMetaContent =
@@ -585,7 +838,8 @@ class Mp4Writer {
       return Uint8List.fromList([...meta, ...ilst]);
     }
 
-    final ilstContent = meta.sublist(ilstIdx.$1 + 8, ilstIdx.$2);
+    final ilstData = _dataStartAt(meta, ilstIdx.$1, ilstIdx.$2);
+    final ilstContent = meta.sublist(ilstData, ilstIdx.$2);
     final newIlstContent = _mergeIlst(ilstContent, atoms, replaceKey);
     final newIlst = _wrapBox('ilst', newIlstContent);
     return _spliceBytes(meta, ilstIdx.$1, ilstIdx.$2, newIlst);
@@ -599,7 +853,7 @@ class Mp4Writer {
     final kept = <int>[];
     int pos = 0;
     while (pos + 8 <= ilst.length) {
-      final sz = readUint32BE(ilst, pos);
+      final (sz, _) = _boxHeaderAt(ilst, pos, ilst.length);
       if (sz < 8 || pos + sz > ilst.length) break;
       final type = String.fromCharCodes(ilst.sublist(pos + 4, pos + 8));
       if (!replaceKeys.contains(type)) {
@@ -623,7 +877,9 @@ class Mp4Writer {
   // ── Atom builders ─────────────────────────────────────────────────────────
 
   static Uint8List _buildTextAtom(String key, String value) {
-    final textBytes = Uint8List.fromList(value.codeUnits);
+    // UTF-8 encode — the data atom's type flags (below) declare UTF-8, and
+    // using .codeUnits here would write raw UTF-16 code units as bytes.
+    final textBytes = Uint8List.fromList(utf8.encode(value));
     final dataPayload = Uint8List(8 + textBytes.length);
     dataPayload[2] = 0x00;
     dataPayload[3] = 0x01; // UTF-8
@@ -667,13 +923,13 @@ class Mp4Writer {
       void Function(String type, int boxStart, int boxEnd) visitor) {
     int pos = start;
     while (pos + 8 <= end) {
-      final sz = readUint32BE(bytes, pos);
+      final (sz, hdrSize) = _boxHeaderAt(bytes, pos, end);
       if (sz < 8 || pos + sz > end) break;
       final type = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       visitor(type, pos, pos + sz);
       if (const {'moov', 'trak', 'mdia', 'minf', 'stbl', 'udta'}
           .contains(type)) {
-        _walkBoxes(bytes, pos + 8, pos + sz, visitor);
+        _walkBoxes(bytes, pos + hdrSize, pos + sz, visitor);
       }
       pos += sz;
     }
@@ -685,7 +941,7 @@ class Mp4Writer {
       Uint8List bytes, int start, int end, String type) {
     int pos = start;
     while (pos + 8 <= end) {
-      final sz = readUint32BE(bytes, pos);
+      final (sz, _) = _boxHeaderAt(bytes, pos, end);
       if (sz < 8 || pos + sz > end) break;
       final t = String.fromCharCodes(bytes.sublist(pos + 4, pos + 8));
       if (t == type) return (pos, pos + sz);

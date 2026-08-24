@@ -1,13 +1,18 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
 import 'package:audiovault_editor/services/cue_writer.dart';
 import 'package:audiovault_editor/services/metadata_writer.dart';
+import 'package:audiovault_editor/services/opf_parser.dart';
 import 'package:audiovault_editor/widgets/chapter_editor.dart';
 import 'package:audiovault_editor/widgets/copy_from_dialog.dart';
+import 'package:audiovault_editor/widgets/read_only_badge.dart';
+import 'package:audiovault_editor/widgets/rename_folder_dialog.dart';
 
 class BookDetailScreen extends StatefulWidget {
   final Audiobook book;
@@ -15,8 +20,13 @@ class BookDetailScreen extends StatefulWidget {
   final void Function(Audiobook updated) onApply;
   final void Function() onRescan;
   final void Function()? onUndo;
+  final String undoTooltip;
   final void Function(bool isDirty) onDirtyChanged;
   final void Function(String oldPath, String newPath)? onRenamed;
+
+  /// Invoked after a successful Apply — used by the apply-and-next workflow
+  /// to advance selection to the next book.
+  final VoidCallback? onNext;
 
   const BookDetailScreen({
     super.key,
@@ -25,8 +35,10 @@ class BookDetailScreen extends StatefulWidget {
     required this.onApply,
     required this.onRescan,
     this.onUndo,
+    this.undoTooltip = 'Nothing to undo',
     required this.onDirtyChanged,
     this.onRenamed,
+    this.onNext,
   });
 
   @override
@@ -83,7 +95,10 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   @override
   void didUpdateWidget(BookDetailScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.book.path != widget.book.path) {
+    // Re-seed whenever a new book object arrives (different path OR the same
+    // book refreshed via Apply/Rescan), so on-disk state is never stale in
+    // the form fields.
+    if (!identical(oldWidget.book, widget.book)) {
       _disposeControllers();
       _initControllers();
     }
@@ -222,9 +237,9 @@ class _BookDetailScreenState extends State<BookDetailScreen>
         errors.addAll(chapterErrors);
       }
 
-      // Always export OPF to keep it in sync
-      try {
-        await MetadataWriter.exportOpf(book.copyWith(
+      Audiobook updated;
+      Audiobook buildUpdated({List<Chapter>? chapters, List<String>? chapterNames}) {
+        return book.copyWith(
           title: newTitle,
           subtitle: newSubtitle.isEmpty ? null : newSubtitle,
           author: newAuthor.isEmpty ? null : newAuthor,
@@ -236,60 +251,27 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           publisher: newPublisher.isEmpty ? null : newPublisher,
           language: newLanguage.isEmpty ? null : newLanguage,
           genre: newGenre.isEmpty ? null : newGenre,
-        ));
-      } catch (e) {
-        errors.add('metadata.opf: $e');
+          chapters: chapters,
+          chapterNames: chapterNames,
+          pendingCoverPath: _pendingCoverPath,
+          fileTitleRaw: newTitle,
+          fileAuthorRaw: newAuthor.isEmpty ? null : newAuthor,
+          fileNarratorRaw: newNarrator.isEmpty ? null : newNarrator,
+          fileReleaseDateRaw: newReleaseDate.isEmpty ? null : newReleaseDate,
+          fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
+        );
       }
 
-      Audiobook updated;
       if (book.chapters.isNotEmpty) {
         final newChapters = _pendingChapters != null
             ? _pendingChapters!.map((e) => Chapter(title: e.title, start: e.start)).toList()
             : book.chapters;
-        updated = book.copyWith(
-          title: newTitle,
-          subtitle: newSubtitle.isEmpty ? null : newSubtitle,
-          author: newAuthor.isEmpty ? null : newAuthor,
-          narrator: newNarrator.isEmpty ? null : newNarrator,
-          releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
-          series: newSeries.isEmpty ? null : newSeries,
-          seriesIndex: newSeriesIndex,
-          description: newDescription.isEmpty ? null : newDescription,
-          publisher: newPublisher.isEmpty ? null : newPublisher,
-          language: newLanguage.isEmpty ? null : newLanguage,
-          genre: newGenre.isEmpty ? null : newGenre,
-          chapters: newChapters,
-          pendingCoverPath: _pendingCoverPath,
-          fileTitleRaw: newTitle,
-          fileAuthorRaw: newAuthor.isEmpty ? null : newAuthor,
-          fileNarratorRaw: newNarrator.isEmpty ? null : newNarrator,
-          fileReleaseDateRaw: newReleaseDate.isEmpty ? null : newReleaseDate,
-          fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
-        );
+        updated = buildUpdated(chapters: newChapters);
       } else {
         final newNames = _pendingChapters != null
             ? _pendingChapters!.map((e) => e.title).toList()
             : book.chapterNames;
-        updated = book.copyWith(
-          title: newTitle,
-          subtitle: newSubtitle.isEmpty ? null : newSubtitle,
-          author: newAuthor.isEmpty ? null : newAuthor,
-          narrator: newNarrator.isEmpty ? null : newNarrator,
-          releaseDate: newReleaseDate.isEmpty ? null : newReleaseDate,
-          series: newSeries.isEmpty ? null : newSeries,
-          seriesIndex: newSeriesIndex,
-          description: newDescription.isEmpty ? null : newDescription,
-          publisher: newPublisher.isEmpty ? null : newPublisher,
-          language: newLanguage.isEmpty ? null : newLanguage,
-          genre: newGenre.isEmpty ? null : newGenre,
-          chapterNames: newNames,
-          pendingCoverPath: _pendingCoverPath,
-          fileTitleRaw: newTitle,
-          fileAuthorRaw: newAuthor.isEmpty ? null : newAuthor,
-          fileNarratorRaw: newNarrator.isEmpty ? null : newNarrator,
-          fileReleaseDateRaw: newReleaseDate.isEmpty ? null : newReleaseDate,
-          fileSubtitleRaw: newSubtitle.isEmpty ? null : newSubtitle,
-        );
+        updated = buildUpdated(chapterNames: newNames);
       }
 
       widget.onApply(updated);
@@ -312,7 +294,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     } catch (e) {
       errors.add(e.toString());
     } finally {
-      setState(() => _applying = false);
+      if (mounted) setState(() => _applying = false);
     }
 
     if (errors.isNotEmpty && mounted) {
@@ -321,6 +303,10 @@ class _BookDetailScreenState extends State<BookDetailScreen>
         content: Text('Errors during apply:\n${errors.join('\n')}'),
         duration: const Duration(seconds: 6),
       ));
+    } else if (errors.isEmpty && mounted && widget.onNext != null) {
+      // Apply-and-next: advance to the following book in the current view.
+      final next = widget.onNext!;
+      WidgetsBinding.instance.addPostFrameCallback((_) => next());
     }
   }
 
@@ -384,62 +370,24 @@ class _BookDetailScreenState extends State<BookDetailScreen>
   Future<void> _renameFolder() async {
     final book = widget.book;
     final currentName = p.basename(book.path);
-    
+
     // Propose a new name based on metadata
-    final author = _authorCtrl.text.trim().isEmpty 
-        ? 'Unknown' 
+    final author = _authorCtrl.text.trim().isEmpty
+        ? 'Unknown'
         : _authorCtrl.text.trim();
-    final title = _titleCtrl.text.trim().isEmpty 
-        ? 'Untitled' 
+    final title = _titleCtrl.text.trim().isEmpty
+        ? 'Untitled'
         : _titleCtrl.text.trim();
-    
+
     // Make filesystem-safe by removing invalid characters
     final proposedName = '$author - $title'
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
 
-    final controller = TextEditingController(text: proposedName);
-    
-    final confirmed = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename folder'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Current name:', style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 4),
-            Text(currentName, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            const Text('New name:', style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 4),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Enter new folder name',
-              ),
-              autofocus: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Rename'),
-          ),
-        ],
-      ),
-    );
+    final confirmed =
+        await showRenameFolderDialog(context, currentName: currentName, proposedName: proposedName);
 
-    controller.dispose();
-    
     if (confirmed == null || confirmed.isEmpty || confirmed == currentName) {
       return;
     }
@@ -481,11 +429,88 @@ class _BookDetailScreenState extends State<BookDetailScreen>
     }
   }
 
+  /// Assigns [updates] without firing dirty-detection per field; dirty state
+  /// is re-evaluated once at the end.
+  void _silentlyApply(Map<TextEditingController, String> updates) {
+    final all = [
+      _titleCtrl,
+      _subtitleCtrl,
+      _authorCtrl,
+      _narratorCtrl,
+      _releaseDateCtrl,
+      _seriesCtrl,
+      _seriesIndexCtrl,
+      _descriptionCtrl,
+      _publisherCtrl,
+      _languageCtrl,
+      _genreCtrl,
+    ];
+    for (final c in all) {
+      c.removeListener(_onChanged);
+    }
+    updates.forEach((c, v) => c.text = v);
+    for (final c in all) {
+      c.addListener(_onChanged);
+    }
+    _onChanged();
+  }
+
+  /// Loads `<book folder>/metadata.opf` into the form fields (no disk writes
+  /// until Apply).
+  Future<void> _importOpfFromFolder() async {
+    final opfFile = File(p.join(widget.book.path, 'metadata.opf'));
+    if (!await opfFile.exists()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('No metadata.opf found in this book\'s folder'),
+      ));
+      return;
+    }
+    try {
+      final opf = parseOpf(await opfFile.readAsString());
+      _silentlyApply({
+        if (opf.title != null) _titleCtrl: opf.title!,
+        if (opf.subtitle != null) _subtitleCtrl: opf.subtitle!,
+        if (opf.author != null) _authorCtrl: opf.author!,
+        if (opf.narrator != null) _narratorCtrl: opf.narrator!,
+        if (opf.releaseDate != null) _releaseDateCtrl: opf.releaseDate!,
+        if (opf.series != null) _seriesCtrl: opf.series!,
+        if (opf.seriesIndex != null)
+          _seriesIndexCtrl: opf.seriesIndex.toString(),
+        if (opf.description != null) _descriptionCtrl: opf.description!,
+        if (opf.publisher != null) _publisherCtrl: opf.publisher!,
+        if (opf.language != null) _languageCtrl: opf.language!,
+        if (opf.genre != null) _genreCtrl: opf.genre!,
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text(
+            'Loaded metadata.opf — review and hit Apply to write it to tags'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: Colors.red[900],
+        content: Text('Failed to parse metadata.opf: $e'),
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final readOnly = widget.book.readOnlyStatus != ReadOnlyStatus.writable;
+    final canApply = !readOnly && _isDirty && !_applying && !_chapterHasErrors;
 
-    return Padding(
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyS, control: true): () {
+          if (canApply) _apply();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -501,9 +526,15 @@ class _BookDetailScreenState extends State<BookDetailScreen>
           ),
           const SizedBox(height: 12),
           // ── View toggle ──
-          ToggleButtons(
+          Tooltip(
+            message: _isDirty
+                ? 'Apply or discard your changes before switching views'
+                : '',
+            child: ToggleButtons(
             isSelected: [!_showFileMetadata, _showFileMetadata],
-            onPressed: (i) {
+            onPressed: _isDirty
+                ? null
+                : (i) {
               final showFile = i == 1;
               _titleCtrl.removeListener(_onChanged);
               _subtitleCtrl.removeListener(_onChanged);
@@ -540,6 +571,7 @@ class _BookDetailScreenState extends State<BookDetailScreen>
               Text('File tags only', style: TextStyle(fontSize: 12)),
             ],
           ),
+          ),
           const SizedBox(height: 12),
           // ── Action bar ──
           _buildActionBar(theme),
@@ -562,6 +594,8 @@ class _BookDetailScreenState extends State<BookDetailScreen>
             ),
           ),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -590,6 +624,15 @@ class _BookDetailScreenState extends State<BookDetailScreen>
             style: theme.textTheme.titleLarge,
             maxLines: 2,
             overflow: TextOverflow.ellipsis),
+        if (book.readOnlyStatus != ReadOnlyStatus.writable) ...[
+          const SizedBox(height: 4),
+          ReadOnlyBadge(
+            prominent: true,
+            tooltip: book.readOnlyStatus == ReadOnlyStatus.folderReadOnly
+                ? 'Folder is read-only — metadata changes cannot be saved'
+                : 'One or more audio files are read-only — metadata changes cannot be saved',
+          ),
+        ],
         const SizedBox(height: 4),
         if (_authorCtrl.text.trim().isNotEmpty)
           _summaryRow('Author', _authorCtrl.text.trim()),
@@ -647,7 +690,12 @@ class _BookDetailScreenState extends State<BookDetailScreen>
         .where((b) => b.path != widget.book.path)
         .toList();
 
-    return Row(
+    // Wrap (not Row+Spacer) so the bar degrades gracefully on narrow windows.
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      alignment: WrapAlignment.spaceBetween,
       children: [
         OutlinedButton.icon(
           onPressed: otherBooks.isEmpty ? null : _copyFrom,
@@ -691,9 +739,24 @@ class _BookDetailScreenState extends State<BookDetailScreen>
                   content: Text('Export failed: $e'),
                 ));
               }
+            } else if (value == 'reveal') {
+              // Open the book's folder in Windows Explorer.
+              await Process.run('explorer.exe', [widget.book.path]);
+            } else if (value == 'import_opf') {
+              await _importOpfFromFolder();
             } else if (value == 'export_cue') {
               try {
                 final book = widget.book;
+                // CUE sheets only work with single-file books
+                if (book.audioFiles.length != 1) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    backgroundColor: Colors.orange[800],
+                    content: const Text('CUE sheets can only be exported for single-file books'),
+                  ));
+                  return;
+                }
+                
                 final chapters = _pendingChapters != null
                     ? _pendingChapters!.map((e) => Chapter(title: e.title, start: e.start)).toList()
                     : book.chapters;
@@ -751,23 +814,43 @@ class _BookDetailScreenState extends State<BookDetailScreen>
                 ],
               ),
             ),
-            if (widget.book.audioFiles.length == 1 &&
-                p.extension(widget.book.audioFiles[0]).toLowerCase() == '.mp3')
-              const PopupMenuItem(
-                value: 'export_cue',
-                child: Row(
-                  children: [
-                    Icon(Icons.queue_music, size: 18),
-                    SizedBox(width: 8),
-                    Text('Export CUE'),
-                  ],
-                ),
+            PopupMenuItem(
+              value: 'export_cue',
+              enabled: widget.book.audioFiles.length == 1,
+              child: const Row(
+                children: [
+                  Icon(Icons.queue_music, size: 18),
+                  SizedBox(width: 8),
+                  Text('Export CUE'),
+                ],
               ),
+            ),
+            const PopupMenuItem(
+              value: 'reveal',
+              child: Row(
+                children: [
+                  Icon(Icons.folder_open, size: 18),
+                  SizedBox(width: 8),
+                  Text('Show in Explorer'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'import_opf',
+              enabled:
+                  File(p.join(widget.book.path, 'metadata.opf')).existsSync(),
+              child: const Row(
+                children: [
+                  Icon(Icons.download, size: 18),
+                  SizedBox(width: 8),
+                  Text('Load folder\'s metadata.opf'),
+                ],
+              ),
+            ),
           ],
         ),
-        const Spacer(),
         IconButton(
-          tooltip: 'Undo last apply',
+          tooltip: widget.undoTooltip,
           onPressed: widget.onUndo,
           icon: const Icon(Icons.undo),
         ),
@@ -809,17 +892,31 @@ class _BookDetailScreenState extends State<BookDetailScreen>
                   child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.refresh),
         ),
-        FilledButton.icon(
-          onPressed: (_isDirty && !_applying && !_chapterHasErrors) ? _apply : null,
-          icon: _applying
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.check, size: 18),
-          label: const Text('Apply'),
-        ),
+        Builder(builder: (context) {
+          final bool isReadOnly =
+              widget.book.readOnlyStatus != ReadOnlyStatus.writable;
+          final applyButton = FilledButton.icon(
+            onPressed:
+                (!isReadOnly && _isDirty && !_applying && !_chapterHasErrors)
+                    ? _apply
+                    : null,
+            icon: _applying
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.check, size: 18),
+            label: const Text('Apply'),
+          );
+          if (isReadOnly) {
+            return Tooltip(
+              message: 'Cannot save — folder or files are read-only',
+              child: applyButton,
+            );
+          }
+          return applyButton;
+        }),
         if (_isDirty)
           Padding(
             padding: const EdgeInsets.only(left: 12),
@@ -879,12 +976,19 @@ class _BookDetailScreenState extends State<BookDetailScreen>
 
   Widget _buildCover() {
     final Widget image;
+    // Decode at display resolution (2x headroom for DPR) instead of full art.
+    final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
+    final coverCacheSize =
+        (160 * math.max(1.5, dpr)).round().clamp(160, 1024);
     if (_pendingCoverPath != null) {
-      image = Image.file(File(_pendingCoverPath!), fit: BoxFit.cover);
+      image = Image.file(File(_pendingCoverPath!),
+          fit: BoxFit.cover, cacheWidth: coverCacheSize);
     } else if (widget.book.coverImageBytes != null) {
-      image = Image.memory(widget.book.coverImageBytes!, fit: BoxFit.cover);
+      image = Image.memory(widget.book.coverImageBytes!,
+          fit: BoxFit.cover, cacheWidth: coverCacheSize);
     } else if (widget.book.coverImagePath != null) {
-      image = Image.file(File(widget.book.coverImagePath!), fit: BoxFit.cover);
+      image = Image.file(File(widget.book.coverImagePath!),
+          fit: BoxFit.cover, cacheWidth: coverCacheSize);
     } else {
       image = const Icon(Icons.book, size: 64, color: Colors.white54);
     }

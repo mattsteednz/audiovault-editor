@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/writers/atomic_file_writer.dart';
 
 class FlacWriter {
   const FlacWriter._();
@@ -13,9 +14,18 @@ class FlacWriter {
   /// Returns without error if the file is not a valid FLAC.
   static Future<void> writeMetadata(String filePath, Audiobook book) async {
     final bytes = await File(filePath).readAsBytes();
-    if (!_isFlac(bytes)) return;
-    final result = _rewriteVorbisComment(bytes, book);
-    await File(filePath).writeAsBytes(result);
+    final plan = _vorbisCommentPlan(bytes, book);
+    if (plan == null) return;
+    await writeFileAtomicSplice(filePath, plan);
+  }
+
+  /// Builds a head-only splice plan (fLaC + metadata blocks). The audio
+  /// frames tail is stream-copied by the splice writer.
+  static SplicePlan? _vorbisCommentPlan(Uint8List bytes, Audiobook book) {
+    if (!_isFlac(bytes)) return null;
+    final head = _rebuildHead(bytes, book);
+    if (head == null) return null;
+    return SplicePlan(replaceStart: 0, replaceEnd: head.$2, replacement: head.$1);
   }
 
   /// Builds a Vorbis comment block payload from [book].
@@ -39,7 +49,8 @@ class FlacWriter {
     return _encodeVorbisComment(vendor, comments);
   }
 
-  static Uint8List _rewriteVorbisComment(Uint8List bytes, Audiobook book) {
+  /// Returns `(rebuiltHead, audioStart)` or null on malformed input.
+  static (Uint8List, int)? _rebuildHead(Uint8List bytes, Audiobook book) {
     // Parse existing blocks; collect vendor string and unknown keys from
     // any existing VORBIS_COMMENT block (type 4).
     String? existingVendor;
@@ -78,7 +89,6 @@ class FlacWriter {
       }
       pos += len;
     }
-    final audioData = bytes.sublist(pos);
 
     final newCommentData = buildVorbisCommentBlock(
       book,
@@ -86,6 +96,8 @@ class FlacWriter {
       extraComments: preservedComments,
     );
 
+    // Plan model: head-only — audio frames are streamed by the splice
+    // writer, so they are not included in the replacement.
     final out = BytesBuilder();
     out.add([0x66, 0x4C, 0x61, 0x43]); // fLaC
     for (final (type, data) in blocks) {
@@ -107,8 +119,7 @@ class FlacWriter {
     out.add(newCommentData);
     // Padding block as last metadata block (type 1, 4 bytes of zeros)
     out.add([0x80 | 1, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00]);
-    out.add(audioData);
-    return out.toBytes();
+    return (out.toBytes(), pos);
   }
 
   /// Parses a Vorbis comment block payload.
@@ -171,9 +182,9 @@ class FlacWriter {
 
   static Future<void> embedCover(String filePath, Uint8List jpeg) async {
     final bytes = await File(filePath).readAsBytes();
-    if (!_isFlac(bytes)) return;
-    final result = _rewriteMetadata(bytes, buildPictureBlock(jpeg));
-    await File(filePath).writeAsBytes(result);
+    final plan = _picturePlan(bytes, buildPictureBlock(jpeg));
+    if (plan == null) return;
+    await writeFileAtomicSplice(filePath, plan);
   }
 
   static bool _isFlac(Uint8List bytes) =>
@@ -204,8 +215,10 @@ class FlacWriter {
     return data;
   }
 
-  static Uint8List _rewriteMetadata(
-      Uint8List bytes, Uint8List pictureData) {
+  /// Builds a head-only splice plan replacing all metadata blocks with the
+  /// existing set (minus old PICTURE) plus [pictureData] as last block.
+  static SplicePlan? _picturePlan(Uint8List bytes, Uint8List pictureData) {
+    if (!_isFlac(bytes)) return null;
     final blocks = <(int, Uint8List)>[];
     int pos = 4;
     bool isLast = false;
@@ -223,7 +236,6 @@ class FlacWriter {
       }
       pos += len;
     }
-    final audioData = bytes.sublist(pos);
 
     final out = BytesBuilder();
     out.add([0x66, 0x4C, 0x61, 0x43]); // fLaC
@@ -243,8 +255,7 @@ class FlacWriter {
     picHdr[3] = pictureData.length & 0xFF;
     out.add(picHdr);
     out.add(pictureData);
-    out.add(audioData);
-    return out.toBytes();
+    return SplicePlan(replaceStart: 0, replaceEnd: pos, replacement: out.toBytes());
   }
 
   static void _writeUint32BE(Uint8List b, int offset, int value) {
@@ -262,7 +273,8 @@ class FlacWriter {
 
   /// Runs the rewrite logic on raw bytes. Exposed for tests.
   static Uint8List rewriteForTest(Uint8List bytes, Audiobook book) {
-    if (!_isFlac(bytes)) return bytes;
-    return _rewriteVorbisComment(bytes, book);
+    final plan = _vorbisCommentPlan(bytes, book);
+    if (plan == null) return bytes;
+    return plan.execute(bytes);
   }
 }

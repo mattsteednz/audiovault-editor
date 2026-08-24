@@ -1,36 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/models/chapter_entry.dart';
 import 'package:audiovault_editor/services/silence_detection_service.dart';
 import 'package:audiovault_editor/widgets/detect_chapters_dialog.dart';
 import 'package:audiovault_editor/widgets/quick_edit_dialog.dart';
 import 'package:path/path.dart' as p;
 
-/// Immutable value object representing one row in the chapter editor.
-class ChapterEntry {
-  final String title;
-  final Duration start;
-
-  const ChapterEntry({required this.title, required this.start});
-
-  ChapterEntry copyWith({String? title, Duration? start}) => ChapterEntry(
-        title: title ?? this.title,
-        start: start ?? this.start,
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ChapterEntry &&
-          runtimeType == other.runtimeType &&
-          title == other.title &&
-          start == other.start;
-
-  @override
-  int get hashCode => title.hashCode ^ start.hashCode;
-
-  @override
-  String toString() => 'ChapterEntry(title: $title, start: $start)';
-}
+export 'package:audiovault_editor/models/chapter_entry.dart'
+    show ChapterEntry;
 
 /// Pure Dart controller that owns the chapter list and undo/redo stacks.
 ///
@@ -157,6 +134,34 @@ class ChapterEditorController {
     entries = newList;
   }
 
+  /// Replaces every title with "Chapter N" (1-based), preserving start
+  /// times. Pushes a single undo entry.
+  void renumberTitles() {
+    _pushUndo();
+    entries = [
+      for (int i = 0; i < entries.length; i++)
+        entries[i].copyWith(title: 'Chapter ${i + 1}'),
+    ];
+  }
+
+  /// Shifts every start time by [delta], clamped to ≥ 0. The first chapter
+  /// stays pinned at zero unless [includeFirst] is set (it is re-clamped to
+  /// zero by [updateStart] semantics otherwise). Single undo step.
+  void shiftStarts(Duration delta, {bool includeFirst = false}) {
+    _pushUndo();
+    entries = [
+      for (int i = 0; i < entries.length; i++)
+        if (!includeFirst && i == 0)
+          entries[i]
+        else
+          entries[i].copyWith(
+            start: entries[i].start + delta >= Duration.zero
+                ? entries[i].start + delta
+                : Duration.zero,
+          ),
+    ];
+  }
+
   /// Replaces the entire list (used by Quick Edit save).
   void replaceAll(List<ChapterEntry> newEntries) {
     _pushUndo();
@@ -223,6 +228,59 @@ class ChapterEditorController {
       }
     }
     return buffer.toString();
+  }
+
+  /// Serialises entries to timestamps-only text (one HH:MM:SS per line).
+  ///
+  /// Placeholder entries (empty title + Duration.zero start) are emitted as
+  /// blank lines.
+  String toTimesOnlyText() {
+    final buffer = StringBuffer();
+    for (int i = 0; i < entries.length; i++) {
+      if (i > 0) buffer.write('\n');
+      final entry = entries[i];
+      if (entry.title.isEmpty && entry.start == Duration.zero) {
+        continue; // blank line already written by the '\n' above
+      }
+      buffer.write(formatTimestamp(entry.start));
+    }
+    return buffer.toString();
+  }
+
+  /// Parses timestamps-only text (one HH:MM:SS per line) and merges with
+  /// [existing] titles.
+  ///
+  /// Line count must match [existing].length; if it doesn't, every line is
+  /// still parsed but titles are taken from [existing] where available.
+  /// Blank lines produce placeholder entries (empty title, zero start).
+  static ({List<ChapterEntry> entries, List<int> errorLines}) parseTimesOnlyText(
+      String text, List<ChapterEntry> existing) {
+    if (text.isEmpty) {
+      return (entries: [], errorLines: []);
+    }
+    final lines = text.split('\n');
+    final resultEntries = <ChapterEntry>[];
+    final errorLines = <int>[];
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      final existingTitle = i < existing.length ? existing[i].title : '';
+
+      if (line.isEmpty) {
+        resultEntries.add(ChapterEntry(title: existingTitle, start: Duration.zero));
+        continue;
+      }
+
+      final duration = parseTimestamp(line);
+      if (duration == null) {
+        errorLines.add(i);
+        resultEntries.add(ChapterEntry(title: existingTitle, start: Duration.zero));
+      } else {
+        resultEntries.add(ChapterEntry(title: existingTitle, start: duration));
+      }
+    }
+
+    return (entries: resultEntries, errorLines: errorLines);
   }
 
   /// True if any entry has an empty title, or (when [requireTimestamps] is
@@ -509,6 +567,15 @@ class _ChapterEditorState extends State<ChapterEditor> {
       return;
     }
 
+    // Check beyond book end
+    final bookDuration = widget.book.duration;
+    if (bookDuration != null && parsed >= bookDuration) {
+      setState(() {
+        _startErrors[index] = 'Exceeds book duration';
+      });
+      return;
+    }
+
     // Valid — update controller and reformat
     _ctrl.updateStart(index, parsed);
     setState(() {
@@ -537,7 +604,9 @@ class _ChapterEditorState extends State<ChapterEditor> {
   @override
   void didUpdateWidget(ChapterEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.book.path != widget.book.path) {
+    // Re-seed from any new book object (e.g. after Apply or Rescan), not
+    // only when the path differs.
+    if (!identical(oldWidget.book, widget.book)) {
       _disposeAllControllers();
       _initFromBook();
     }
@@ -593,6 +662,19 @@ class _ChapterEditorState extends State<ChapterEditor> {
           onPressed: _ctrl.canRedo ? () => _mutate(_ctrl.redo) : null,
         ),
         const SizedBox(width: 4),
+        IconButton(
+          icon: const Icon(Icons.format_list_numbered),
+          tooltip: 'Renumber titles as "Chapter 1..N"',
+          onPressed: _ctrl.entries.isEmpty
+              ? null
+              : () => _mutate(_ctrl.renumberTitles),
+        ),
+        if (_isSingleFile)
+          IconButton(
+            icon: const Icon(Icons.schedule),
+            tooltip: 'Shift start times…',
+            onPressed: _ctrl.entries.length < 2 ? null : _openShiftDialog,
+          ),
         if (_isSingleFile) _buildDetectButton(),
         const Spacer(),
         OutlinedButton.icon(
@@ -626,6 +708,52 @@ class _ChapterEditorState extends State<ChapterEditor> {
         onPressed: ffmpegAvailable ? _openDetectDialog : null,
       ),
     );
+  }
+
+  Future<void> _openShiftDialog() async {
+    final ctrl = TextEditingController();
+    final confirmed = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Shift start times'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+                'Shift every chapter (except the first, which stays at '
+                '00:00:00) by this many seconds. Negative values move '
+                'chapters earlier.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(signed: true),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'e.g. 30 or -15',
+                suffixText: 'seconds',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
+            child: const Text('Shift'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != null && confirmed != 0 && mounted) {
+      _mutate(() => _ctrl.shiftStarts(Duration(seconds: confirmed)));
+    }
   }
 
   Future<void> _openDetectDialog() async {
@@ -909,11 +1037,13 @@ class _ChapterEditorState extends State<ChapterEditor> {
   }
 
   void _openQuickEdit() {
+    final originalEntries = List<ChapterEntry>.of(_ctrl.entries);
     showDialog<void>(
       context: context,
       builder: (ctx) => QuickEditDialog(
-        initialText: _ctrl.toQuickEditText(_isSingleFile),
-        includeTimestamps: _isSingleFile,
+        initialEntries: originalEntries,
+        isSingleFile: _isSingleFile,
+        bookDuration: widget.book.duration,
         onSave: (entries) {
           _mutate(() => _ctrl.replaceAll(entries));
         },

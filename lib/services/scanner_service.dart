@@ -1,42 +1,60 @@
-import 'dart:convert';
-import 'dart:io';
+﻿import 'dart:io';
 import 'dart:typed_data';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
+import 'package:flutter/foundation.dart' show compute, visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:audiovault_editor/models/audiobook.dart';
+import 'package:audiovault_editor/services/app_logger.dart';
+import 'package:audiovault_editor/services/cue_sheet_parser.dart';
+import 'package:audiovault_editor/services/m4b_chapter_reader.dart';
 import 'package:audiovault_editor/services/opf_parser.dart';
-
-class _CueSheet {
-  final String? title;
-  final String? author;
-  final List<String> audioFiles;
-  final List<Chapter> chapters;
-
-  const _CueSheet({
-    this.title,
-    this.author,
-    required this.audioFiles,
-    required this.chapters,
-  });
-}
 
 class ScannerService {
   static const _audioExtensions = {'.mp3', '.m4a', '.aac', '.m4b', '.flac', '.ogg'};
   static const _imageExtensions = {'.jpg', '.jpeg', '.png', '.webp'};
   static const int maxScanDepth = 3;
 
+  /// How many book folders are scanned concurrently.
+  static const int scanConcurrency = 4;
+
+  /// Non-fatal problems collected during the most recent public scan call.
+  final List<String> lastRunWarnings = [];
+
+  void _warn(String message) {
+    AppLog.w(message);
+    lastRunWarnings.add(message);
+  }
+
   /// Re-scans a single book folder and returns the updated [Audiobook], or
   /// null if no audio files were found.
-  Future<Audiobook?> scanBook(String folderPath) =>
-      _scanSubfolder(Directory(folderPath));
+  Future<Audiobook?> scanBook(String folderPath) {
+    lastRunWarnings.clear();
+    return _scanSubfolder(Directory(folderPath));
+  }
 
+  /// Recursively scans [folderPath] for books.
+  ///
+  /// [cancelled] is polled between folders; when it returns true the scan
+  /// stops early and returns the books found so far. Up to
+  /// [scanConcurrency] subfolders are processed concurrently.
   Future<List<Audiobook>> scanFolder(String folderPath,
       {void Function(Audiobook)? onBookFound,
-      void Function(int found, int total)? onProgress}) async {
+      void Function(int found, int total)? onProgress,
+      bool Function()? cancelled}) async {
+    lastRunWarnings.clear();
     final dir = Directory(folderPath);
-    if (!await dir.exists()) return [];
+    if (!await dir.exists()) {
+      _warn('Library folder does not exist: $folderPath');
+      return [];
+    }
 
-    final entries = await dir.list().toList();
+    List<FileSystemEntity> entries;
+    try {
+      entries = await dir.list().toList();
+    } catch (e) {
+      _warn('Could not read library folder "$folderPath": $e');
+      return [];
+    }
     final subdirs = entries
         .whereType<Directory>()
         .where((d) => !p.basename(d.path).startsWith('.'))
@@ -44,19 +62,27 @@ class ScannerService {
 
     final total = subdirs.length;
     final books = <Audiobook>[];
-    for (int i = 0; i < subdirs.length; i++) {
-      final results = await _scanAsBookOrAuthorFolder(subdirs[i]);
-      for (final book in results) {
-        onBookFound?.call(book);
+    for (int i = 0; i < subdirs.length; i += scanConcurrency) {
+      if (cancelled?.call() ?? false) break;
+      final batchEnd = (i + scanConcurrency).clamp(0, subdirs.length);
+      final results = await Future.wait(
+        [for (int j = i; j < batchEnd; j++) _scanAsBookOrAuthorFolder(subdirs[j])],
+      );
+      for (final folderResults in results) {
+        for (final book in folderResults) {
+          onBookFound?.call(book);
+        }
+        books.addAll(folderResults);
       }
-      books.addAll(results);
       onProgress?.call(books.length, total);
     }
 
-    final rootBook = await _scanSubfolder(dir);
-    if (rootBook != null) {
-      onBookFound?.call(rootBook);
-      books.add(rootBook);
+    if (!(cancelled?.call() ?? false)) {
+      final rootBook = await _scanSubfolder(dir);
+      if (rootBook != null) {
+        onBookFound?.call(rootBook);
+        books.add(rootBook);
+      }
     }
 
     books.sort((a, b) {
@@ -76,7 +102,8 @@ class ScannerService {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list().toList();
-    } catch (_) {
+    } catch (e) {
+      _warn('Could not read folder "${dir.path}": $e');
       return const [];
     }
     final subdirs = entries
@@ -97,7 +124,8 @@ class ScannerService {
     List<FileSystemEntity> entries;
     try {
       entries = await dir.list().toList();
-    } catch (_) {
+    } catch (e) {
+      _warn('Could not read folder "${dir.path}": $e');
       return null;
     }
 
@@ -112,15 +140,18 @@ class ScannerService {
       ..sort(naturalSortCompare);
     final imageFiles = allFiles.where((f) => _isImage(f.path)).toList();
 
-    // CUE sheet — only used for file ordering and chapter timestamps
-    _CueSheet? cueSheet;
+    // CUE sheet â€” only used for file ordering and chapter timestamps
+    CueSheet? cueSheet;
     final cueFiles = allFiles
         .where((f) => p.extension(f.path).toLowerCase() == '.cue')
         .toList();
     if (cueFiles.isNotEmpty) {
       try {
-        cueSheet = _parseCueSheet(await cueFiles.first.readAsString(), dir.path);
-      } catch (_) {}
+        cueSheet =
+            parseCueSheet(await cueFiles.first.readAsString(), dir.path);
+      } catch (e) {
+        _warn('Unreadable CUE sheet in "${dir.path}": $e');
+      }
     }
     if (cueSheet != null && cueSheet.audioFiles.isNotEmpty) {
       audioFiles..clear()..addAll(cueSheet.audioFiles);
@@ -128,7 +159,7 @@ class ScannerService {
 
     if (audioFiles.isEmpty) return null;
 
-    // ── Read raw file tags from the first audio file ──────────────────────
+    // â”€â”€ Read raw file tags off the UI thread â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     String? fileTitle;
     String? fileAuthor;
     String? fileNarrator;
@@ -139,63 +170,29 @@ class ScannerService {
     String? fileLanguage;
     String? fileGenre;
     Uint8List? coverBytes;
-    Duration totalDuration = Duration.zero;
     final chapterDurations = <Duration>[];
 
     final coverPath = _pickBestCover(imageFiles);
 
-    for (final filePath in audioFiles) {
-      try {
-        final needArt = coverPath == null && coverBytes == null;
-        final meta = readMetadata(File(filePath), getImage: needArt); // ignore: avoid_redundant_argument_values - value is dynamic
-        chapterDurations.add(meta.duration ?? Duration.zero);
-        totalDuration += meta.duration ?? Duration.zero;
-        if (needArt && meta.pictures.isNotEmpty) {
-          coverBytes = meta.pictures.first.bytes;
-        }
-      } catch (_) {
-        chapterDurations.add(Duration.zero);
-      }
-    }
-
-    // Read extended tags from first file only
     if (audioFiles.isNotEmpty) {
-      try {
-        final raw = readAllMetadata(File(audioFiles.first), getImage: false); // ignore: avoid_redundant_argument_values - explicit false is clearer
-        if (raw is Mp3Metadata) {
-          fileTitle = raw.album?.trim().nullIfEmpty;
-          fileAuthor = raw.leadPerformer?.trim().nullIfEmpty;
-          fileNarrator = raw.bandOrOrchestra?.trim().nullIfEmpty;
-          fileSubtitle = raw.subtitle?.trim().nullIfEmpty;
-          fileReleaseDate = raw.year != null && raw.year! > 0
-              ? raw.year.toString()
-              : null;
-          fileDescription = raw.comments.firstOrNull?.text.trim().nullIfEmpty;
-          filePublisher = raw.publisher?.trim().nullIfEmpty;
-          fileLanguage = raw.languages?.trim().nullIfEmpty;
-          fileGenre = raw.contentType?.trim().nullIfEmpty;
-        } else if (raw is Mp4Metadata) {
-          fileTitle = raw.album?.trim().nullIfEmpty;
-          fileAuthor = raw.artist?.trim().nullIfEmpty;
-          // Note: Mp4Metadata does not expose composer (©wrt) atom.
-          // Narrator for M4B files is read from OPF when present.
-          fileReleaseDate = raw.year?.year != null ? raw.year!.year.toString() : null;
-          fileGenre = raw.genre?.trim().nullIfEmpty;
-        } else if (raw is VorbisMetadata) {
-          fileTitle = raw.album.firstOrNull?.trim().nullIfEmpty;
-          fileAuthor = raw.artist.firstOrNull?.trim().nullIfEmpty;
-          fileNarrator = raw.performer.firstOrNull?.trim().nullIfEmpty;
-          fileDescription = raw.description.firstOrNull?.trim().nullIfEmpty
-              ?? raw.comment.firstOrNull?.trim().nullIfEmpty;
-          filePublisher = raw.organization.firstOrNull?.trim().nullIfEmpty;
-          final yr = raw.date.firstOrNull?.year;
-          if (yr != null && yr > 0) fileReleaseDate = yr.toString();
-          fileGenre = raw.genres.firstOrNull?.trim().nullIfEmpty;
-        }
-      } catch (_) {}
+      final metaResult = await compute(_readAudioMetaJob,
+          (files: audioFiles, wantArt: coverPath == null));
+      chapterDurations.addAll(metaResult.durations);
+      coverBytes = metaResult.coverBytes;
+
+      final raw = await compute(_readExtendedTagsJob, audioFiles.first);
+      fileTitle = raw.$1;
+      fileAuthor = raw.$2;
+      fileNarrator = raw.$3;
+      fileSubtitle = raw.$4;
+      fileReleaseDate = raw.$5;
+      fileDescription = raw.$6;
+      filePublisher = raw.$7;
+      fileLanguage = raw.$8;
+      fileGenre = raw.$9;
     }
 
-    // ── OPF — wins over file tags for all mapped fields ───────────────────
+    // â”€â”€ OPF â€” wins over file tags for all mapped fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     OpfMetadata opf = const OpfMetadata();
     bool hasOpf = false;
     final opfFile = allFiles
@@ -205,7 +202,9 @@ class ScannerService {
       try {
         opf = parseOpf(await opfFile.readAsString());
         hasOpf = true;
-      } catch (_) {}
+      } catch (e) {
+        _warn('Could not parse metadata.opf in "${dir.path}": $e');
+      }
     }
 
     final title = opf.title ?? fileTitle;
@@ -219,22 +218,27 @@ class ScannerService {
     final genre = opf.genre ?? fileGenre;
     final identifier = opf.identifier;
 
-    // ── Chapters ──────────────────────────────────────────────────────────
+    // â”€â”€ Chapters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     List<Chapter> chapters = const [];
     if (audioFiles.length == 1 &&
         p.extension(audioFiles.first).toLowerCase() == '.m4b') {
-      chapters = await _parseM4bChapters(audioFiles.first);
+      chapters = await parseM4bChapters(audioFiles.first);
     } else if (cueSheet != null && cueSheet.chapters.isNotEmpty) {
       chapters = cueSheet.chapters;
     }
 
-    // Multi-file chapter names: use filename without extension — no heuristics
+    // Multi-file chapter names: use filename without extension â€” no heuristics
     final chapterNames = audioFiles.length > 1
         ? audioFiles.map((f) => p.basenameWithoutExtension(f)).toList()
         : const <String>[];
 
     final hasEmbeddedTags = fileTitle != null || fileAuthor != null;
     final hasCue = cueSheet != null;
+
+    final readOnlyStatus = await _checkReadOnlyStatus(dir, audioFiles);
+
+    final totalDuration = chapterDurations.fold<Duration>(
+        Duration.zero, (sum, d) => sum + d);
 
     return Audiobook(
       title: title,
@@ -263,6 +267,7 @@ class ScannerService {
       hasOpf: hasOpf,
       hasCue: hasCue,
       hasEmbeddedTags: hasEmbeddedTags,
+      readOnlyStatus: readOnlyStatus,
       fileTitleRaw: fileTitle,
       fileAuthorRaw: fileAuthor,
       fileNarratorRaw: fileNarrator,
@@ -271,277 +276,6 @@ class ScannerService {
     );
   }
 
-  // ── M4B chapter parsing ───────────────────────────────────────────────────
-
-  Future<List<Chapter>> _parseM4bChapters(String filePath) async {
-    try {
-      return await _parseM4bChaptersInner(filePath)
-          .timeout(const Duration(seconds: 10), onTimeout: () => const []);
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  Future<List<Chapter>> _parseM4bChaptersInner(String filePath) async {
-    RandomAccessFile? raf;
-    try {
-      raf = await File(filePath).open();
-      final fileSize = await raf.length();
-      final nero = await _scanForChpl(raf, 0, fileSize);
-      if (nero.isNotEmpty) return nero;
-      return _parseQTChapters(raf, fileSize);
-    } catch (_) {
-      return const [];
-    } finally {
-      await raf?.close();
-    }
-  }
-
-  Future<List<(String, int, int)>> _listBoxes(
-      RandomAccessFile raf, int start, int end) async {
-    final result = <(String, int, int)>[];
-    var pos = start;
-    while (pos + 8 <= end) {
-      await raf.setPosition(pos);
-      final hdr = await raf.read(8);
-      if (hdr.length < 8) break;
-      final bd = ByteData.sublistView(Uint8List.fromList(hdr));
-      var sz = bd.getUint32(0); // big-endian is default
-      final type = String.fromCharCodes(hdr.sublist(4, 8));
-      int dataStart = pos + 8;
-      if (sz == 1) {
-        final ext = await raf.read(8);
-        if (ext.length < 8) break;
-        final ebd = ByteData.sublistView(Uint8List.fromList(ext));
-        sz = (ebd.getUint32(0) << 32) | ebd.getUint32(4);
-        dataStart = pos + 16;
-      } else if (sz == 0) {
-        sz = end - pos;
-      }
-      if (sz < 8) break;
-      result.add((type, dataStart, pos + sz));
-      pos += sz;
-    }
-    return result;
-  }
-
-  (String, int, int)? _firstBox(List<(String, int, int)> boxes, String type) {
-    for (final b in boxes) {
-      if (b.$1 == type) return b;
-    }
-    return null;
-  }
-
-  Future<Uint8List> _readBox(RandomAccessFile raf, (String, int, int) box) async {
-    await raf.setPosition(box.$2);
-    return Uint8List.fromList(await raf.read(box.$3 - box.$2));
-  }
-
-  Future<List<Chapter>> _scanForChpl(
-      RandomAccessFile raf, int start, int end,
-      {int depth = 0}) async {
-    if (depth > 8) return const [];
-    final boxes = await _listBoxes(raf, start, end);
-    for (final box in boxes) {
-      if (box.$1 == 'chpl') return _parseChpl(await _readBox(raf, box));
-      if (box.$1 == 'moov' || box.$1 == 'udta') {
-        final result = await _scanForChpl(raf, box.$2, box.$3, depth: depth + 1);
-        if (result.isNotEmpty) return result;
-      }
-      if (box.$1 == 'meta') {
-        // meta box has a 4-byte version/flags prefix before children
-        final childStart = box.$2 + 4;
-        if (childStart < box.$3) {
-          final result = await _scanForChpl(raf, childStart, box.$3, depth: depth + 1);
-          if (result.isNotEmpty) return result;
-        }
-      }
-    }
-    return const [];
-  }
-
-  List<Chapter> _parseChpl(Uint8List data) {
-    if (data.length < 9) return const [];
-    final bd = ByteData.sublistView(data);
-    int offset = 5;
-    if (offset + 4 > data.length) return const [];
-    final count = bd.getUint32(offset);
-    offset += 4;
-    final chapters = <Chapter>[];
-    for (int i = 0; i < count; i++) {
-      if (offset + 9 > data.length) break;
-      final hi = bd.getUint32(offset);
-      final lo = bd.getUint32(offset + 4);
-      final units100ns = (hi << 32) | lo;
-      offset += 8;
-      final titleLen = data[offset++];
-      if (offset + titleLen > data.length) break;
-      chapters.add(Chapter(
-        title: utf8.decode(data.sublist(offset, offset + titleLen),
-            allowMalformed: true),
-        start: Duration(microseconds: units100ns ~/ 10),
-      ));
-      offset += titleLen;
-    }
-    return chapters;
-  }
-
-  Future<List<Chapter>> _parseQTChapters(
-      RandomAccessFile raf, int fileSize) async {
-    final top = await _listBoxes(raf, 0, fileSize);
-    final moov = _firstBox(top, 'moov');
-    if (moov == null) return const [];
-    final moovBoxes = await _listBoxes(raf, moov.$2, moov.$3);
-    for (final box in moovBoxes) {
-      if (box.$1 != 'trak') continue;
-      final chapters = await _tryQTChapterTrak(raf, box);
-      if (chapters.isNotEmpty) return chapters;
-    }
-    return const [];
-  }
-
-  Future<List<Chapter>> _tryQTChapterTrak(
-      RandomAccessFile raf, (String, int, int) trak) async {
-    final trakBoxes = await _listBoxes(raf, trak.$2, trak.$3);
-    final mdia = _firstBox(trakBoxes, 'mdia');
-    if (mdia == null) return const [];
-    final mdiaBoxes = await _listBoxes(raf, mdia.$2, mdia.$3);
-    final mdhd = _firstBox(mdiaBoxes, 'mdhd');
-    final minf = _firstBox(mdiaBoxes, 'minf');
-    if (mdhd == null || minf == null) return const [];
-    final minfBoxes = await _listBoxes(raf, minf.$2, minf.$3);
-    if (_firstBox(minfBoxes, 'gmhd') == null) return const [];
-    final stbl = _firstBox(minfBoxes, 'stbl');
-    if (stbl == null) return const [];
-    final stblBoxes = await _listBoxes(raf, stbl.$2, stbl.$3);
-    final stts = _firstBox(stblBoxes, 'stts');
-    final stsz = _firstBox(stblBoxes, 'stsz');
-    final stco = _firstBox(stblBoxes, 'stco');
-    final co64 = _firstBox(stblBoxes, 'co64');
-    final stsc = _firstBox(stblBoxes, 'stsc');
-    if (stts == null || stsz == null || (stco == null && co64 == null)) {
-      return const [];
-    }
-    return _extractQTChapters(raf, mdhd, stts, stsz, stco ?? co64!, stsc,
-        isco64: stco == null);
-  }
-
-  Future<List<Chapter>> _extractQTChapters(
-    RandomAccessFile raf,
-    (String, int, int) mdhd,
-    (String, int, int) stts,
-    (String, int, int) stsz,
-    (String, int, int) stco,
-    (String, int, int)? stsc, {
-    bool isco64 = false,
-  }) async {
-    final mdhdData = await _readBox(raf, mdhd);
-    final sttsData = await _readBox(raf, stts);
-    final stszData = await _readBox(raf, stsz);
-    final stcoData = await _readBox(raf, stco);
-    final stscData = stsc != null ? await _readBox(raf, stsc) : null;
-
-    final mdhdBD = ByteData.sublistView(mdhdData);
-    final timeScale = mdhdBD.getUint32(mdhdData[0] == 1 ? 20 : 12);
-    if (timeScale == 0) return const [];
-
-    final sttsBD = ByteData.sublistView(sttsData);
-    final sttsCount = sttsBD.getUint32(4);
-    final sampleStarts = <int>[];
-    int ticks = 0, off = 8;
-    for (int i = 0; i < sttsCount && off + 8 <= sttsData.length; i++) {
-      final n = sttsBD.getUint32(off);
-      final d = sttsBD.getUint32(off + 4);
-      for (int j = 0; j < n && sampleStarts.length < 10000; j++) {
-        sampleStarts.add(ticks);
-        ticks += d;
-      }
-      off += 8;
-      if (sampleStarts.length >= 10000) break;
-    }
-
-    final stszBD = ByteData.sublistView(stszData);
-    final defSz = stszBD.getUint32(4);
-    final sampleCount = stszBD.getUint32(8);
-    final sizes = <int>[];
-    if (defSz == 0) {
-      off = 12;
-      for (int i = 0; i < sampleCount && off + 4 <= stszData.length; i++, off += 4) {
-        sizes.add(stszBD.getUint32(off));
-      }
-    } else {
-      sizes.addAll(List.filled(sampleCount, defSz));
-    }
-
-    final stcoBD = ByteData.sublistView(stcoData);
-    final chunkCount = stcoBD.getUint32(4);
-    final chunkOffsets = <int>[];
-    off = 8;
-    if (isco64) {
-      for (int i = 0; i < chunkCount && off + 8 <= stcoData.length; i++, off += 8) {
-        final hi = stcoBD.getUint32(off);
-        final lo = stcoBD.getUint32(off + 4);
-        chunkOffsets.add((hi << 32) | lo);
-      }
-    } else {
-      for (int i = 0; i < chunkCount && off + 4 <= stcoData.length; i++, off += 4) {
-        chunkOffsets.add(stcoBD.getUint32(off));
-      }
-    }
-
-    final sampleOffsets = <int>[];
-    if (stscData != null && stscData.length >= 8) {
-      final stscBD = ByteData.sublistView(stscData);
-      final stscCount = stscBD.getUint32(4);
-      final runs = <(int, int)>[];
-      off = 8;
-      for (int i = 0; i < stscCount && off + 12 <= stscData.length; i++, off += 12) {
-        runs.add((stscBD.getUint32(off) - 1,
-                  stscBD.getUint32(off + 4)));
-      }
-      int sIdx = 0;
-      for (int c = 0; c < chunkOffsets.length; c++) {
-        int spc = 1;
-        for (int e = runs.length - 1; e >= 0; e--) {
-          if (c >= runs[e].$1) { spc = runs[e].$2; break; }
-        }
-        int chunkOff = chunkOffsets[c];
-        for (int j = 0; j < spc && sIdx < sizes.length; j++, sIdx++) {
-          sampleOffsets.add(chunkOff);
-          chunkOff += sizes[sIdx];
-        }
-      }
-    } else {
-      sampleOffsets.addAll(chunkOffsets.take(sizes.length));
-    }
-
-    final chapters = <Chapter>[];
-    for (int i = 0;
-        i < sizes.length && i < sampleOffsets.length && i < sampleStarts.length;
-        i++) {
-      await raf.setPosition(sampleOffsets[i]);
-      final data = await raf.read(sizes[i]);
-      if (data.length < 3) continue;
-      final len = (data[0] << 8) | data[1];
-      if (len == 0 || 2 + len > data.length) continue;
-      final titleBytes = data.sublist(2, 2 + len);
-      String title;
-      try {
-        title = utf8.decode(titleBytes);
-      } catch (_) {
-        final chars = <int>[];
-        for (int j = 0; j + 1 < titleBytes.length; j += 2) {
-          chars.add((titleBytes[j] << 8) | titleBytes[j + 1]);
-        }
-        title = String.fromCharCodes(chars);
-      }
-      chapters.add(Chapter(
-        title: title,
-        start: Duration(microseconds: sampleStarts[i] * 1000000 ~/ timeScale),
-      ));
-    }
-    return chapters;
-  }
 
   String? _pickBestCover(List<File> images) {
     if (images.isEmpty) return null;
@@ -576,82 +310,149 @@ class ScannerService {
     return segA.length.compareTo(segB.length);
   }
 
-  _CueSheet? _parseCueSheet(String content, String folderPath) {
-    String? globalTitle;
-    String? globalPerformer;
-    final fileSections = <({String path, List<Chapter> chapters})>[];
-    String? currentFilePath;
-    final pendingChapters = <Chapter>[];
-    String? pendingTrackTitle;
+  /// Public wrapper for testing — delegates to [_checkReadOnlyStatus].
+  // ignore: invalid_use_of_visible_for_testing_member
+  @visibleForTesting
+  Future<ReadOnlyStatus> checkReadOnlyStatusForTesting(
+          Directory dir, List<String> audioFiles) =>
+      _checkReadOnlyStatus(dir, audioFiles);
 
-    void commitFile() {
-      if (currentFilePath != null) {
-        fileSections.add((path: currentFilePath!, chapters: List.of(pendingChapters)));
+  /// Checks whether [dir] and each file in [audioFiles] are writable by the
+  /// current OS user without modifying any data on disk.
+  ///
+  /// - Folder writability is probed by creating a temporary directory inside
+  ///   [dir] and immediately deleting it.  If that throws, the folder is
+  ///   considered read-only.
+  /// - File writability is probed by opening each file in append mode and
+  ///   immediately closing it without writing any bytes.  If that throws, the
+  ///   file is considered read-only.
+  ///
+  /// Returns [ReadOnlyStatus.folderReadOnly] when the folder is not writable,
+  /// [ReadOnlyStatus.filesReadOnly] when the folder is writable but at least
+  /// one audio file is not, and [ReadOnlyStatus.writable] when everything is
+  /// writable.
+  Future<ReadOnlyStatus> _checkReadOnlyStatus(
+      Directory dir, List<String> audioFiles) async {
+    // â”€â”€ Probe folder writability â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    bool folderWritable = false;
+    try {
+      final tmp = await dir.createTemp('.kiro_probe_');
+      await tmp.delete();
+      folderWritable = true;
+    } catch (e) {
+      AppLog.d('Folder write probe failed for "${dir.path}": $e');
+      folderWritable = false;
+    }
+
+    if (!folderWritable) return ReadOnlyStatus.folderReadOnly;
+
+    // â”€â”€ Probe each audio file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    for (final filePath in audioFiles) {
+      bool fileWritable = false;
+      try {
+        final sink = File(filePath).openWrite(mode: FileMode.append);
+        await sink.flush();
+        await sink.close();
+        fileWritable = true;
+      } catch (e) {
+        AppLog.d('File write probe failed for "$filePath": $e');
+        fileWritable = false;
       }
-      pendingChapters.clear();
-      currentFilePath = null;
-      pendingTrackTitle = null;
+      if (!fileWritable) return ReadOnlyStatus.filesReadOnly;
     }
 
-    for (var line in content.split('\n')) {
-      line = line.trim();
-      if (line.isEmpty || line.startsWith('REM')) continue;
-      if (line.startsWith('FILE ')) {
-        commitFile();
-        final match = RegExp(r'^FILE\s+"(.+?)"\s+\S+').firstMatch(line) ??
-            RegExp(r'^FILE\s+(\S+)\s+\S+').firstMatch(line);
-        if (match == null) continue;
-        final filename = match.group(1)!.replaceAll('\\', p.separator);
-        final resolved = p.join(folderPath, filename);
-        currentFilePath = File(resolved).existsSync() ? resolved : null;
-      } else if (line.startsWith('TITLE ')) {
-        final title = _cueUnquote(line.substring(6));
-        if (currentFilePath == null && fileSections.isEmpty) {
-          globalTitle = title;
-        } else {
-          pendingTrackTitle = title;
-        }
-      } else if (line.startsWith('PERFORMER ')) {
-        final performer = _cueUnquote(line.substring(10));
-        if (currentFilePath == null && fileSections.isEmpty) globalPerformer = performer;
-      } else if (line.startsWith('INDEX 01 ') && pendingTrackTitle != null) {
-        final dur = _parseCueTime(line.substring(9).trim());
-        if (dur != null && currentFilePath != null) {
-          pendingChapters.add(Chapter(title: pendingTrackTitle!, start: dur));
-        }
-        pendingTrackTitle = null;
-      }
-    }
-    commitFile();
-    if (fileSections.isEmpty) return null;
-    return _CueSheet(
-      title: globalTitle,
-      author: globalPerformer,
-      audioFiles: fileSections.map((s) => s.path).toList(),
-      chapters: fileSections.length == 1 ? fileSections.first.chapters : const [],
-    );
-  }
-
-  String _cueUnquote(String s) {
-    s = s.trim();
-    if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
-      return s.substring(1, s.length - 1);
-    }
-    return s;
-  }
-
-  Duration? _parseCueTime(String s) {
-    final parts = s.split(':');
-    if (parts.length != 3) return null;
-    final mm = int.tryParse(parts[0]);
-    final ss = int.tryParse(parts[1]);
-    final ff = int.tryParse(parts[2]);
-    if (mm == null || ss == null || ff == null) return null;
-    return Duration(milliseconds: mm * 60000 + ss * 1000 + ff * 1000 ~/ 75);
+    return ReadOnlyStatus.writable;
   }
 
   bool _isAudio(String path) => _audioExtensions.contains(p.extension(path).toLowerCase());
   bool _isImage(String path) => _imageExtensions.contains(p.extension(path).toLowerCase());
+
+  // â”€â”€ Isolate jobs (tag parsing is CPU-heavy and must not jank the UI) â”€â”€â”€â”€â”€
+
+  /// Reads duration + embedded art for every audio file. Runs inside an
+  /// isolate via [compute].
+  static ({List<Duration> durations, Uint8List? coverBytes}) _readAudioMetaJob(
+      ({List<String> files, bool wantArt}) msg) {
+    final durations = <Duration>[];
+    Uint8List? coverBytes;
+    var needArt = msg.wantArt;
+    for (final filePath in msg.files) {
+      try {
+        final meta = readMetadata(File(filePath), getImage: needArt); // ignore: avoid_redundant_argument_values - value is dynamic
+        durations.add(meta.duration ?? Duration.zero);
+        if (needArt && meta.pictures.isNotEmpty) {
+          coverBytes = meta.pictures.first.bytes;
+          needArt = false;
+        }
+      } catch (e) {
+        AppLog.d('Could not read metadata from "$filePath": $e');
+        durations.add(Duration.zero);
+      }
+    }
+    return (durations: durations, coverBytes: coverBytes);
+  }
+
+  /// Reads extended tags from the first audio file. Runs inside an isolate.
+  static (
+    String? title,
+    String? author,
+    String? narrator,
+    String? subtitle,
+    String? releaseDate,
+    String? description,
+    String? publisher,
+    String? language,
+    String? genre,
+  ) _readExtendedTagsJob(String filePath) {
+    try {
+      final raw =
+          readAllMetadata(File(filePath), getImage: false); // ignore: avoid_redundant_argument_values - explicit false is clearer
+      if (raw is Mp3Metadata) {
+        return (
+          raw.album?.trim().nullIfEmpty,
+          raw.leadPerformer?.trim().nullIfEmpty,
+          raw.bandOrOrchestra?.trim().nullIfEmpty,
+          raw.subtitle?.trim().nullIfEmpty,
+          raw.year != null && raw.year! > 0 ? raw.year.toString() : null,
+          raw.comments.firstOrNull?.text.trim().nullIfEmpty,
+          raw.publisher?.trim().nullIfEmpty,
+          raw.languages?.trim().nullIfEmpty,
+          raw.contentType?.trim().nullIfEmpty,
+        );
+      } else if (raw is Mp4Metadata) {
+        // Note: Mp4Metadata does not expose composer (Â©wrt) atom.
+        // Narrator for M4B files is read from OPF when present.
+        return (
+          raw.album?.trim().nullIfEmpty,
+          raw.artist?.trim().nullIfEmpty,
+          null,
+          null,
+          raw.year?.year != null ? raw.year!.year.toString() : null,
+          null,
+          null,
+          null,
+          raw.genre?.trim().nullIfEmpty,
+        );
+      } else if (raw is VorbisMetadata) {
+        final yr = raw.date.firstOrNull?.year;
+        return (
+          raw.album.firstOrNull?.trim().nullIfEmpty,
+          raw.artist.firstOrNull?.trim().nullIfEmpty,
+          raw.performer.firstOrNull?.trim().nullIfEmpty,
+          null,
+          yr != null && yr > 0 ? yr.toString() : null,
+          raw.description.firstOrNull?.trim().nullIfEmpty ??
+              raw.comment.firstOrNull?.trim().nullIfEmpty,
+          raw.organization.firstOrNull?.trim().nullIfEmpty,
+          null,
+          raw.genres.firstOrNull?.trim().nullIfEmpty,
+        );
+      }
+    } catch (e) {
+      AppLog.d('Could not read extended tags from "$filePath": $e');
+    }
+    return (null, null, null, null, null, null, null, null, null);
+  }
 }
 
 extension _StringExt on String {

@@ -57,4 +57,61 @@ void main() {
       expect(copy.opfMeta, {'calibre:timestamp': '2024'});
     });
   });
+
+  // Validates: Requirements 2.1, 2.2, 2.3
+  group('Audiobook readOnlyStatus field', () {
+    test('defaults to ReadOnlyStatus.writable when not set', () {
+      expect(base.readOnlyStatus, ReadOnlyStatus.writable);
+    });
+
+    test('can be set to folderReadOnly in constructor', () {
+      const book = Audiobook(
+        path: '/books/ro',
+        audioFiles: ['/books/ro/track.mp3'],
+        readOnlyStatus: ReadOnlyStatus.folderReadOnly,
+      );
+      expect(book.readOnlyStatus, ReadOnlyStatus.folderReadOnly);
+    });
+
+    test('can be set to filesReadOnly in constructor', () {
+      const book = Audiobook(
+        path: '/books/ro',
+        audioFiles: ['/books/ro/track.mp3'],
+        readOnlyStatus: ReadOnlyStatus.filesReadOnly,
+      );
+      expect(book.readOnlyStatus, ReadOnlyStatus.filesReadOnly);
+    });
+
+    test('copyWith preserves readOnlyStatus when not passed', () {
+      const book = Audiobook(
+        path: '/books/ro',
+        audioFiles: ['/books/ro/track.mp3'],
+        readOnlyStatus: ReadOnlyStatus.folderReadOnly,
+      );
+      expect(book.copyWith().readOnlyStatus, ReadOnlyStatus.folderReadOnly);
+    });
+
+    test('copyWith updates readOnlyStatus when explicitly passed', () {
+      const book = Audiobook(
+        path: '/books/ro',
+        audioFiles: ['/books/ro/track.mp3'],
+        readOnlyStatus: ReadOnlyStatus.folderReadOnly,
+      );
+      final copy = book.copyWith(readOnlyStatus: ReadOnlyStatus.writable);
+      expect(copy.readOnlyStatus, ReadOnlyStatus.writable);
+    });
+
+    test('copyWith can change from writable to filesReadOnly', () {
+      final copy = base.copyWith(readOnlyStatus: ReadOnlyStatus.filesReadOnly);
+      expect(copy.readOnlyStatus, ReadOnlyStatus.filesReadOnly);
+    });
+
+    test('copyWith does not affect other fields when only readOnlyStatus changes', () {
+      final copy = base.copyWith(readOnlyStatus: ReadOnlyStatus.folderReadOnly);
+      expect(copy.title, base.title);
+      expect(copy.author, base.author);
+      expect(copy.path, base.path);
+      expect(copy.audioFiles, base.audioFiles);
+    });
+  });
 }

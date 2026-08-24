@@ -89,8 +89,52 @@ Uint8List _buildOggPage(Uint8List packet, {int pageSeq = 1}) {
   return page;
 }
 
+/// Splits [packet] across pages of at most [maxSegs] segments each.
+/// With all-255 segments except the terminator, intermediate pages end
+/// with a 255 segment (continuation) naturally.
+List<Uint8List> _packetToPages(Uint8List packet,
+    {required int firstSeq, int serial = 1, int maxSegs = 255}) {
+  final segs = <int>[];
+  int remaining = packet.length;
+  while (remaining >= 255) {
+    segs.add(255);
+    remaining -= 255;
+  }
+  segs.add(remaining);
+
+  final pages = <Uint8List>[];
+  int segPos = 0;
+  int bytePos = 0;
+  while (segPos < segs.length) {
+    final take =
+        (segs.length - segPos) > maxSegs ? maxSegs : (segs.length - segPos);
+    final pageSegs = segs.sublist(segPos, segPos + take);
+    final payloadLen = pageSegs.fold<int>(0, (s, v) => s + v);
+    final headerSize = 27 + pageSegs.length;
+    final page = Uint8List(headerSize + payloadLen);
+    page[0] = 0x4F; page[1] = 0x67; page[2] = 0x67; page[3] = 0x53;
+    page[4] = 0;
+    page[5] = pages.isEmpty ? 0 : 0x01; // continuation bit
+    _writeLE(page, 14, serial);
+    _writeLE(page, 18, firstSeq + pages.length);
+    page[26] = pageSegs.length;
+    page.setRange(27, 27 + pageSegs.length, pageSegs);
+    page.setRange(headerSize, headerSize + payloadLen,
+        packet.sublist(bytePos, bytePos + payloadLen));
+    final crc = _oggCrc32(page);
+    page[22] = crc & 0xFF;
+    page[23] = (crc >> 8) & 0xFF;
+    page[24] = (crc >> 16) & 0xFF;
+    page[25] = (crc >> 24) & 0xFF;
+    pages.add(page);
+    segPos += take;
+    bytePos += payloadLen;
+  }
+  return pages;
+}
+
 /// Builds a minimal OGG file with an identification page (page 0) and a
-/// comment page (page 1) containing [vendor] and [comments].
+/// comment header carried on one or more pages.
 Uint8List _buildMinimalOgg(String vendor, List<String> comments) {
   // Page 0: Vorbis identification header (type 0x01)
   final idPacket = Uint8List(30);
@@ -98,61 +142,94 @@ Uint8List _buildMinimalOgg(String vendor, List<String> comments) {
   idPacket.setRange(1, 7, [0x76, 0x6F, 0x72, 0x62, 0x69, 0x73]);
   final page0 = _buildOggPage(idPacket, pageSeq: 0);
 
-  // Page 1: Vorbis comment header
+  // Comment header pages.
   final commentPacket = _buildVorbisCommentPacket(vendor, comments);
-  final page1 = _buildOggPage(commentPacket);
+  final commentPages =
+      _packetToPages(commentPacket, firstSeq: 1);
 
-  return Uint8List.fromList([...page0, ...page1]);
+  return Uint8List.fromList([
+    ...page0,
+    for (final pg in commentPages) ...pg,
+  ]);
 }
 
-/// Extracts the Vorbis comment packet from an OGG file.
+/// Extracts the Vorbis comment packet from an OGG file, reassembling it
+/// across continuation pages when needed.
 Map<String, String> _extractComments(Uint8List bytes) {
+  final packet = _extractCommentPacket(bytes);
+  if (packet == null) return {};
+  int off = 7;
+  int readLE() {
+    final v = packet[off] |
+        (packet[off + 1] << 8) |
+        (packet[off + 2] << 16) |
+        (packet[off + 3] << 24);
+    off += 4;
+    return v;
+  }
+
+  final vendorLen = readLE();
+  off += vendorLen;
+  final count = readLE();
+  final result = <String, String>{};
+  for (int i = 0; i < count; i++) {
+    final len = readLE();
+    final str =
+        utf8.decode(packet.sublist(off, off + len), allowMalformed: true);
+    off += len;
+    final eq = str.indexOf('=');
+    if (eq > 0) {
+      result[str.substring(0, eq).toUpperCase()] = str.substring(eq + 1);
+    }
+  }
+  return result;
+}
+
+/// Walks OGG pages, finds the comment header packet (starting at offset 0 of
+/// a non-continued page), and reassembles it across continuation pages.
+Uint8List? _extractCommentPacket(Uint8List bytes) {
+  // (headerStart, payloadStart, payloadLen)
+  final bounds = <(int, int, int)>[];
   int pos = 0;
   while (pos + 27 <= bytes.length) {
+    if (bytes[pos] != 0x4F || bytes[pos + 1] != 0x67) return null;
     final numSegs = bytes[pos + 26];
-    if (pos + 27 + numSegs > bytes.length) break;
     final segTable = bytes.sublist(pos + 27, pos + 27 + numSegs);
-    final pageDataLen = segTable.fold(0, (s, v) => s + v);
-    final pageStart = pos + 27 + numSegs;
-    if (pageStart + pageDataLen > bytes.length) break;
-    final pageData = bytes.sublist(pageStart, pageStart + pageDataLen);
-    if (pageData.length >= 7 &&
-        pageData[0] == 0x03 &&
-        pageData[1] == 0x76 &&
-        pageData[2] == 0x6F &&
-        pageData[3] == 0x72 &&
-        pageData[4] == 0x62 &&
-        pageData[5] == 0x69 &&
-        pageData[6] == 0x73) {
-      int off = 7;
-      final vendorLen = pageData[off] |
-          (pageData[off + 1] << 8) |
-          (pageData[off + 2] << 16) |
-          (pageData[off + 3] << 24);
-      off += 4 + vendorLen;
-      final count = pageData[off] |
-          (pageData[off + 1] << 8) |
-          (pageData[off + 2] << 16) |
-          (pageData[off + 3] << 24);
-      off += 4;
-      final result = <String, String>{};
-      for (int i = 0; i < count; i++) {
-        final len = pageData[off] |
-            (pageData[off + 1] << 8) |
-            (pageData[off + 2] << 16) |
-            (pageData[off + 3] << 24);
-        off += 4;
-        final str = utf8.decode(pageData.sublist(off, off + len),
-            allowMalformed: true);
-        off += len;
-        final eq = str.indexOf('=');
-        if (eq > 0) result[str.substring(0, eq).toUpperCase()] = str.substring(eq + 1);
-      }
-      return result;
-    }
-    pos = pageStart + pageDataLen;
+    final payloadLen = segTable.fold<int>(0, (s, v) => s + v);
+    final payloadStart = pos + 27 + numSegs;
+    if (payloadStart + payloadLen > bytes.length) return null;
+    bounds.add((pos, payloadStart, payloadLen));
+    pos = payloadStart + payloadLen;
   }
-  return {};
+
+  for (int i = 0; i < bounds.length; i++) {
+    final (hdr, start, len) = bounds[i];
+    final first = bytes[start];
+    if (first != 0x03) continue;
+    if (len < 7) continue;
+    const vorbis = [0x76, 0x6F, 0x72, 0x62, 0x69, 0x73];
+    var markerOk = true;
+    for (int j = 0; j < 6; j++) {
+      if (bytes[start + 1 + j] != vorbis[j]) markerOk = false;
+    }
+    if (!markerOk) continue;
+
+    // Reassemble across continuation pages while lacing chains on.
+    final packetBytes = BytesBuilder();
+    int pageIdx = i;
+    while (true) {
+      final (h, ps, pl) = bounds[pageIdx];
+      packetBytes.add(bytes.sublist(ps, ps + pl));
+      final numSegs = bytes[h + 26];
+      final lastSeg = bytes[h + 27 + numSegs - 1];
+      final continues = lastSeg == 255;
+      pageIdx++;
+      if (!continues) break;
+      if (pageIdx >= bounds.length) return null;
+    }
+    return packetBytes.toBytes();
+  }
+  return null;
 }
 
 Audiobook _book({
@@ -251,6 +328,80 @@ void main() {
       final book = _book();
       final result = OggWriter.rewriteCommentsForTest(notOgg, book);
       expect(result, isNull);
+    });
+  });
+
+  group('OggWriter multi-page comment packets', () {
+    test('rewrites a comment packet spanning two pages', () {
+      // Vendor long enough to push the packet past one page (~65 KB).
+      final bigVendor = 'V' * 70000;
+      final ogg = _buildMinimalOgg(bigVendor, ['ALBUM=Old', 'KEEPME=yes']);
+      expect(_extractComments(ogg)['ALBUM'], 'Old',
+          reason: 'sanity: fixture must be readable');
+
+      final result = OggWriter.rewriteCommentsForTest(
+          ogg, _book(title: 'New', author: 'Auth'));
+      expect(result, isNotNull);
+
+      final map = _extractComments(result!);
+      expect(map['ALBUM'], 'New');
+      expect(map['ARTIST'], 'Auth');
+      expect(map['KEEPME'], 'yes');
+    });
+
+    test('emits multi-page output for oversized comments', () {
+      final ogg = _buildMinimalOgg('Enc', []);
+      // 100 KB description -> new packet far exceeds a single page.
+      final book = _book(
+          title: 'T', author: 'A', description: 'D' * 100000);
+
+      final result = OggWriter.rewriteCommentsForTest(ogg, book);
+      expect(result, isNotNull);
+      expect(result!.length, greaterThan(100000));
+
+      final map = _extractComments(result);
+      expect(map['COMMENT'], 'D' * 100000);
+      expect(map['ALBUM'], 'T');
+    });
+
+    test('all output pages carry valid CRCs and contiguous sequences', () {
+      final ogg = _buildMinimalOgg('Enc', []);
+      final book = _book(title: 'T', author: 'A', description: 'C' * 150000);
+      final result = OggWriter.rewriteCommentsForTest(ogg, book)!;
+
+      int pos = 0;
+      final seqs = <int>[];
+      while (pos + 27 <= result.length) {
+        expect(result[pos], 0x4F, reason: 'page magic at $pos');
+        expect(result[pos + 1], 0x67);
+        expect(result[pos + 2], 0x67);
+        expect(result[pos + 3], 0x53);
+        final numSegs = result[pos + 26];
+        final segSum = result
+            .sublist(pos + 27, pos + 27 + numSegs)
+            .fold<int>(0, (s, v) => s + v);
+        final pageEnd = pos + 27 + numSegs + segSum;
+        expect(pageEnd, lessThanOrEqualTo(result.length));
+
+        // CRC check: read stored value, zero field, compute, compare.
+        final stored = result.sublist(pos + 22, pos + 26);
+        result[pos + 22] = 0;
+        result[pos + 23] = 0;
+        result[pos + 24] = 0;
+        result[pos + 25] = 0;
+        final expected = _oggCrc32(result.sublist(pos, pageEnd));
+        expect(stored[0], expected & 0xFF, reason: 'CRC byte 0 @$pos');
+        expect(stored[1], (expected >> 8) & 0xFF);
+        expect(stored[2], (expected >> 16) & 0xFF);
+        expect(stored[3], (expected >> 24) & 0xFF);
+
+        seqs.add(result[pos + 18]);
+        pos = pageEnd;
+      }
+      for (int i = 1; i < seqs.length; i++) {
+        expect(seqs[i], (seqs[i - 1] + 1) % 256,
+            reason: 'sequence numbers must stay contiguous');
+      }
     });
   });
 }

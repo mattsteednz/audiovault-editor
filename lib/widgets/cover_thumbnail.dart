@@ -1,8 +1,13 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:audiovault_editor/models/audiobook.dart';
 
 /// A small square thumbnail showing a book's cover image, or a placeholder icon.
+///
+/// Images are decoded at thumbnail resolution (via [Image.cacheWidth]) rather
+/// than at full embedded-art resolution, which keeps memory and scroll jank
+/// under control in large libraries.
 class CoverThumbnail extends StatelessWidget {
   final Audiobook book;
   final double size;
@@ -15,6 +20,10 @@ class CoverThumbnail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Decode no larger than needed for the on-screen pixel size.
+    final dpr = MediaQuery.maybeOf(context)?.devicePixelRatio ?? 1.0;
+    final cacheSize = math.max(1, (size * dpr).round());
+
     Widget image;
 
     if (book.coverImageBytes != null) {
@@ -23,6 +32,7 @@ class CoverThumbnail extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
+        cacheWidth: cacheSize,
         errorBuilder: (context, error, stack) => _placeholder(),
       );
     } else if (book.coverImagePath != null) {
@@ -31,6 +41,7 @@ class CoverThumbnail extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
+        cacheWidth: cacheSize,
         errorBuilder: (context, error, stack) => _placeholder(),
       );
     } else {
